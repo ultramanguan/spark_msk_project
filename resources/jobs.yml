@@ -1,0 +1,82 @@
+resources:
+  jobs:
+    retail_lakehouse_pipeline:
+      name: retail-lakehouse-pipeline-${bundle.target}
+      max_concurrent_runs: 1
+      job_clusters:
+        - job_cluster_key: pipeline_cluster
+          new_cluster:
+            spark_version: 15.4.x-scala2.12
+            node_type_id: i3.xlarge
+            num_workers: 2
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.sql.shuffle.partitions: "8"
+      tasks:
+        - task_key: setup
+          job_cluster_key: pipeline_cluster
+          notebook_task:
+            notebook_path: ../notebooks/00_environment_setup.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              base_path: ${var.base_path}
+          libraries:
+            - whl: ../dist/*.whl
+
+        - task_key: batch_medallion
+          depends_on:
+            - task_key: setup
+          job_cluster_key: pipeline_cluster
+          notebook_task:
+            notebook_path: ../notebooks/01_batch_lakehouse_bronze_silver_gold.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              base_path: ${var.base_path}
+          libraries:
+            - whl: ../dist/*.whl
+
+        - task_key: kafka_streaming_ingest
+          depends_on:
+            - task_key: batch_medallion
+          job_cluster_key: pipeline_cluster
+          notebook_task:
+            notebook_path: ../notebooks/02_kafka_msk_streaming_ingest.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              base_path: ${var.base_path}
+              kafka_bootstrap_servers: ${var.kafka_bootstrap_servers}
+              kafka_topic: ${var.kafka_topic}
+          libraries:
+            - whl: ../dist/*.whl
+          # If kafka_bootstrap_servers is unset, this task fails fast by design (see notebook 02).
+          # Set run_if: NONE_FAILED on downstream tasks in a real deployment if you want the pipeline
+          # to continue with the file/rate fallback when MSK isn't provisioned yet.
+
+        - task_key: streaming_silver_gold
+          depends_on:
+            - task_key: kafka_streaming_ingest
+          job_cluster_key: pipeline_cluster
+          notebook_task:
+            notebook_path: ../notebooks/03_streaming_silver_gold_delta.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              base_path: ${var.base_path}
+          libraries:
+            - whl: ../dist/*.whl
+
+        - task_key: capstone
+          depends_on:
+            - task_key: streaming_silver_gold
+          job_cluster_key: pipeline_cluster
+          notebook_task:
+            notebook_path: ../notebooks/06_capstone_end_to_end.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              base_path: ${var.base_path}
+          libraries:
+            - whl: ../dist/*.whl

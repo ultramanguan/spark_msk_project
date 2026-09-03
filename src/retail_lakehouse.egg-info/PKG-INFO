@@ -1,0 +1,15 @@
+Metadata-Version: 2.4
+Name: retail-lakehouse
+Version: 0.1.0
+Summary: Production AWS Databricks lakehouse pipeline: S3 + MSK Kafka + Delta Lake with Spark Structured Streaming.
+Author: Data Engineering Team
+Requires-Python: >=3.10
+Requires-Dist: pydantic>=2.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
+Requires-Dist: pyspark>=3.5.0; extra == "dev"
+Requires-Dist: delta-spark>=3.1.0; extra == "dev"
+Requires-Dist: build>=1.0; extra == "dev"
+Requires-Dist: ruff>=0.6.0; extra == "dev"
+Provides-Extra: kafka
+Requires-Dist: kafka-python>=2.0.2; extra == "kafka"
