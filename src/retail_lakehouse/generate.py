@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 import random
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable
 
 EVENT_TYPES = ["view", "add_to_cart", "purchase", "search", "checkout"]
 CATEGORIES = ["electronics", "grocery", "home", "apparel", "beauty"]

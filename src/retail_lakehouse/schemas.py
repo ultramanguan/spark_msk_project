@@ -1,5 +1,11 @@
 from pyspark.sql.types import (
-    StructType, StructField, StringType, TimestampType, IntegerType, DoubleType, LongType
+    DoubleType,
+    IntegerType,
+    LongType,
+    StringType,
+    StructField,
+    StructType,
+    TimestampType,
 )
 
 click_event_schema = StructType([

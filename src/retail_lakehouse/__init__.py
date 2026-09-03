@@ -1,2 +1,2 @@
-__all__ = ["config", "schemas", "transformations", "streaming", "quality", "generate"]
+__all__ = ["config", "generate", "quality", "schemas", "streaming", "transformations"]
 __version__ = "0.1.0"

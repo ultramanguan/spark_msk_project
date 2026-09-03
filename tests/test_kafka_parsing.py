@@ -1,5 +1,6 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
+
 from retail_lakehouse.transformations import parse_kafka_value
 
 
@@ -10,7 +11,7 @@ def test_parse_kafka_value(spark):
         "quantity": 2, "price": 10.0, "page": "cart", "user_agent": "web",
     })
     df = spark.createDataFrame(
-        [("retail-clickstream", 0, 100, datetime(2026, 1, 1), "u1".encode(), payload.encode())],
+        [("retail-clickstream", 0, 100, datetime(2026, 1, 1, tzinfo=timezone.utc), b"u1", payload.encode())],
         ["topic", "partition", "offset", "timestamp", "key", "value"],
     )
     out = parse_kafka_value(df).collect()[0]

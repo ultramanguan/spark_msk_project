@@ -1,5 +1,11 @@
-from datetime import datetime
-from retail_lakehouse.transformations import normalize_click_events, filter_valid_events, revenue_by_hour, deduplicate_events
+from datetime import datetime, timezone
+
+from retail_lakehouse.transformations import (
+    deduplicate_events,
+    filter_valid_events,
+    normalize_click_events,
+    revenue_by_hour,
+)
 
 
 def test_normalize_click_events(spark):
@@ -16,17 +22,17 @@ def test_normalize_click_events(spark):
 
 def test_filter_valid_events(spark):
     df = spark.createDataFrame([
-        ("e1", datetime(2026, 1, 1), "u1", "view"),
-        (None, datetime(2026, 1, 1), "u2", "view"),
-        ("e3", datetime(2026, 1, 1), "u3", "bad_type"),
+        ("e1", datetime(2026, 1, 1, tzinfo=timezone.utc), "u1", "view"),
+        (None, datetime(2026, 1, 1, tzinfo=timezone.utc), "u2", "view"),
+        ("e3", datetime(2026, 1, 1, tzinfo=timezone.utc), "u3", "bad_type"),
     ], ["event_id", "event_ts", "user_id", "event_type"])
     assert filter_valid_events(df).count() == 1
 
 
 def test_revenue_by_hour(spark):
     df = spark.createDataFrame([
-        (datetime(2026, 1, 1, 1), "electronics", "west", "e1", 2, 10.0, 20.0, True, "purchase"),
-        (datetime(2026, 1, 1, 1), "electronics", "west", "e2", 1, 5.0, 5.0, False, "view"),
+        (datetime(2026, 1, 1, 1, tzinfo=timezone.utc), "electronics", "west", "e1", 2, 10.0, 20.0, True, "purchase"),
+        (datetime(2026, 1, 1, 1, tzinfo=timezone.utc), "electronics", "west", "e2", 1, 5.0, 5.0, False, "view"),
     ], ["event_hour", "category", "region", "event_id", "quantity", "price", "gross_amount", "is_purchase", "event_type"])
     out = revenue_by_hour(df).collect()[0]
     assert out["orders"] == 1
@@ -35,11 +41,13 @@ def test_revenue_by_hour(spark):
 
 def test_deduplicate_events_keeps_latest_ingest(spark):
     df = spark.createDataFrame([
-        ("e1", datetime(2026, 1, 1, 0, 0)),
-        ("e1", datetime(2026, 1, 1, 0, 5)),
-        ("e2", datetime(2026, 1, 1, 0, 0)),
+        ("e1", datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)),
+        ("e1", datetime(2026, 1, 1, 0, 5, tzinfo=timezone.utc)),
+        ("e2", datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)),
     ], ["event_id", "_ingest_ts"])
     out = deduplicate_events(df)
     assert out.count() == 2
     kept = out.filter("event_id = 'e1'").collect()[0]
-    assert kept["_ingest_ts"] == datetime(2026, 1, 1, 0, 5)
+    # Spark strips tzinfo on collect(), returning a naive datetime in session-local wall-clock
+    # time; reattach UTC before comparing to the (UTC) expected value.
+    assert kept["_ingest_ts"].replace(tzinfo=timezone.utc) == datetime(2026, 1, 1, 0, 5, tzinfo=timezone.utc)
