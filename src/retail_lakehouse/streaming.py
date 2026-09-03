@@ -35,6 +35,7 @@ def windowed_revenue(df: DataFrame, window_duration: str = "5 minutes",
     """)
 
 
+
 def make_gold_upsert(target_table: str, merge_keys: list[str], update_cols: list[str]) -> Callable:
     """Build a `foreachBatch` function that MERGEs a micro-batch's aggregated rows into a gold
     Delta table by `merge_keys`, updating `update_cols` on match and inserting otherwise.
