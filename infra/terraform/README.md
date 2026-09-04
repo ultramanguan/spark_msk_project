@@ -36,8 +36,9 @@ terraform apply
 terraform output next_steps
 ```
 
-Follow the printed `next_steps` output — it walks through fetching bootstrap brokers, creating the Kafka
-topic, and registering the Unity Catalog service credential Databricks uses to authenticate to MSK.
+Follow the printed `next_steps` output — it walks through fetching bootstrap brokers and creating the
+Kafka topic. No credential registration step is needed anymore: EMR authenticates to MSK via the EC2
+instance profile in `iam.tf`, attached automatically to any cluster built from this Terraform.
 
 ## Files
 
@@ -45,12 +46,15 @@ topic, and registering the Unity Catalog service credential Databricks uses to a
 - `variables.tf` — all inputs; see `terraform.tfvars.example` for a starting point.
 - `s3.tf` — the lakehouse bucket, versioning, encryption, public access block, checkpoint lifecycle rule.
 - `msk.tf` — MSK Serverless cluster + its security group (IAM auth, port 9098 from the Databricks SG only).
-- `iam.tf` — the IAM role + policy backing a Unity Catalog *service credential* (the serverless-compatible
-  replacement for a classic cluster instance profile) that lets Databricks connect/read/write the MSK
-  cluster and topics. Registering the role as a service credential in Databricks is a two-phase process —
-  see the comments at the top of `iam.tf`. **Verify the rendered topic/group ARNs in the AWS console after
-  apply** — MSK IAM ARN shapes for topics/consumer groups aren't simply derivable from the cluster ARN by
-  string substitution across all AWS partitions, so double-check before relying on this in a real account.
+- `iam.tf` — the EC2 instance profile role EMR clusters use to access MSK, S3, and Glue (plus the EMR
+  service role). Classic instance-profile pattern — EMR is real EC2, so there's no service-credential
+  indirection needed. **Verify the rendered MSK topic/group ARNs in the AWS console after apply** — MSK
+  IAM ARN shapes for topics/consumer groups aren't simply derivable from the cluster ARN by string
+  substitution across all AWS partitions, so double-check before relying on this in a real account.
+- `emr_learning.tf` — a persistent EMR cluster with JupyterHub, for interactive/teaching notebooks (see
+  `emr-notebooks/` and `class-emr/`, added in later plans). Bills continuously while running.
+- `mwaa.tf` — the MWAA (managed Airflow) environment that orchestrates the production pipeline (see
+  `airflow/dags/`, added in a later plan).
 - `outputs.tf` — the `next_steps` runbook text printed after apply.
 
 ## Teardown

@@ -13,17 +13,12 @@ output "next_steps" {
 
        See ../../scripts/create_msk_topics.sh for a wrapper and a sample client.properties for IAM auth.
 
-    3. Register the Unity Catalog service credential Databricks uses to authenticate to MSK (this replaces
-       instance-profile attachment -- required for serverless compute):
-       a. In Databricks: Catalog Explorer -> External Data -> Credentials -> Create credential ->
-          Service Credential, using the role ARN from `terraform output databricks_msk_service_credential_role_arn`.
-       b. Copy the External ID Databricks generates, set it as `databricks_service_credential_external_id`
-          in terraform.tfvars, and run `terraform apply` again to finalize the self-assuming trust policy.
-       c. Back in Databricks, select the credential and run its "Validate configuration" check.
-       See infra/terraform/iam.tf for the full two-phase explanation.
+    3. No credential registration step needed -- EMR clusters built from this Terraform (the persistent
+       learning cluster in emr_learning.tf, and the ephemeral production clusters MWAA creates) already
+       have MSK access via the EC2 instance profile in iam.tf.
 
-    4. Set notebooks/02_kafka_msk_streaming_ingest.py's widgets: `kafka_bootstrap_servers` to the value
-       from step 1, and `kafka_service_credential` to the credential name you chose in step 3.
+    4. Interactive learning notebooks (emr-notebooks/, added in a later plan) take the bootstrap-brokers
+       string from step 1 as a plain notebook variable -- no widget/credential-name setup required.
   EOT
 }
 
