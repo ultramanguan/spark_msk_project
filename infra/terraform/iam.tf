@@ -1,57 +1,20 @@
-# IAM role backing a Unity Catalog *service credential* -- the serverless-compatible replacement for a
-# classic cluster instance profile. Spark's Kafka connector consumes this via the
-# `databricks.serviceCredential` read/write option (see notebooks/02_kafka_msk_streaming_ingest.py),
-# and Databricks vends temporary credentials for it at runtime -- no instance profile attachment needed,
-# and it works on serverless compute (Databricks Runtime 16.1+).
-#
-# Setup requires a self-assuming trust policy, and self-assumption needs an External ID that only exists
-# once Databricks has registered the credential -- a genuine two-phase process (this is how Databricks'
-# own service credential setup docs describe it, not a shortcut taken here):
-#
-#   1. `terraform apply` with the default `databricks_service_credential_external_id = "0000"` below. This
-#      creates the role with a placeholder trust policy.
-#   2. In Databricks: Catalog Explorer -> External Data -> Credentials -> Create credential -> Service
-#      Credential, using this role's ARN (`databricks_msk_service_credential_role_arn` output). Databricks
-#      generates a real External ID -- copy it.
-#   3. Set `databricks_service_credential_external_id` in terraform.tfvars to that value and
-#      `terraform apply` again. This updates the trust policy to require the real External ID, making the
-#      role self-assuming, which Databricks has required for all service credentials since 2025-01-20.
-#   4. Back in Databricks, select the credential and run its "Validate configuration" check.
-#
-# Principal ARN below is Databricks' Unity Catalog master role for standard AWS (not GovCloud) -- see
-# https://docs.databricks.com/aws/en/connect/unity-catalog/cloud-services/service-credentials
+# IAM role + instance profile EMR clusters use to access MSK, S3, and the Glue Data Catalog, plus the
+# EMR service role. Classic EC2-based instance profile -- unlike Databricks serverless compute, EMR
+# nodes are real EC2 instances that can have a profile attached directly, so there's no
+# service-credential/self-assuming-trust-policy indirection needed here.
 
-resource "aws_iam_role" "databricks_msk_service_credential" {
-  name = "${var.project_name}-${var.environment}-databricks-msk-service-credential"
+resource "aws_iam_role" "emr_instance_profile_role" {
+  name = "${var.project_name}-${var.environment}-emr-instance-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "DatabricksUnityCatalogTrust"
         Effect = "Allow"
         Principal = {
-          AWS = "arn:aws:iam::414351767826:role/unity-catalog-prod-UCMasterRole-14S5ZJVKOTYTL"
+          Service = "ec2.amazonaws.com"
         }
         Action = "sts:AssumeRole"
-        Condition = {
-          StringEquals = {
-            "sts:ExternalId" = var.databricks_service_credential_external_id
-          }
-        }
-      },
-      {
-        Sid    = "SelfAssume"
-        Effect = "Allow"
-        Principal = {
-          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.project_name}-${var.environment}-databricks-msk-service-credential"
-        }
-        Action = "sts:AssumeRole"
-        Condition = {
-          StringEquals = {
-            "sts:ExternalId" = var.databricks_service_credential_external_id
-          }
-        }
       }
     ]
   })
@@ -62,12 +25,55 @@ resource "aws_iam_role" "databricks_msk_service_credential" {
   }
 }
 
+resource "aws_iam_instance_profile" "emr" {
+  name = "${var.project_name}-${var.environment}-emr-instance-profile"
+  role = aws_iam_role.emr_instance_profile_role.name
+}
+
+# The EMR *service* role (distinct from the EC2 instance role above) that EMR itself assumes to manage
+# cluster resources on your behalf. Provisioned here so this project stays fully Terraform-managed,
+# instead of requiring a one-time manual `aws emr create-default-roles`.
+resource "aws_iam_role" "emr_service_role" {
+  name = "${var.project_name}-${var.environment}-emr-service-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Service = "elasticmapreduce.amazonaws.com"
+        }
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+
+  tags = {
+    Project     = var.project_name
+    Environment = var.environment
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "emr_service_role_managed" {
+  role       = aws_iam_role.emr_service_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonElasticMapReduceRole"
+}
+
+# Lets the SSM agent (preinstalled on EMR's AMI) check in, so JupyterHub on the learning cluster can be
+# reached via `aws ssm start-session ... --document-name AWS-StartPortForwardingSession` instead of
+# opening inbound security group rules to the internet. See emr_learning.tf.
+resource "aws_iam_role_policy_attachment" "emr_ssm_managed" {
+  role       = aws_iam_role.emr_instance_profile_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
 # Scope note: this example scopes cluster-level actions to the specific MSK cluster ARN, and topic-level
 # actions to the "retail-clickstream*" topic name pattern. Tighten `Resource` further per your org's IAM
 # standards before using outside training/demo purposes.
-resource "aws_iam_role_policy" "databricks_msk_access" {
-  name = "${var.project_name}-${var.environment}-databricks-msk-access"
-  role = aws_iam_role.databricks_msk_service_credential.id
+resource "aws_iam_role_policy" "emr_msk_access" {
+  name = "${var.project_name}-${var.environment}-emr-msk-access"
+  role = aws_iam_role.emr_instance_profile_role.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -112,7 +118,72 @@ resource "aws_iam_role_policy" "databricks_msk_access" {
 # policy in the AWS console after apply and correct the Resource ARNs if needed -- see AWS's MSK IAM access
 # control documentation for the exact ARN format.
 
-output "databricks_msk_service_credential_role_arn" {
-  value = aws_iam_role.databricks_msk_service_credential.arn
+resource "aws_iam_role_policy" "emr_s3_access" {
+  name = "${var.project_name}-${var.environment}-emr-s3-access"
+  role = aws_iam_role.emr_instance_profile_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "LakehouseBucketReadWrite"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:ListBucket",
+        ]
+        Resource = [
+          aws_s3_bucket.lakehouse.arn,
+          "${aws_s3_bucket.lakehouse.arn}/*",
+        ]
+      }
+    ]
+  })
 }
 
+# Scope note: Glue Data Catalog actions are left unscoped (Resource = "*") because Glue's ARN hierarchy
+# (catalog/database/table) makes precise scoping verbose for a training/demo project. Tighten before
+# using outside that context, same as the MSK policy above.
+resource "aws_iam_role_policy" "emr_glue_access" {
+  name = "${var.project_name}-${var.environment}-emr-glue-access"
+  role = aws_iam_role.emr_instance_profile_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "GlueDataCatalog"
+        Effect = "Allow"
+        Action = [
+          "glue:GetDatabase",
+          "glue:GetDatabases",
+          "glue:CreateDatabase",
+          "glue:GetTable",
+          "glue:GetTables",
+          "glue:CreateTable",
+          "glue:UpdateTable",
+          "glue:DeleteTable",
+          "glue:GetPartition",
+          "glue:GetPartitions",
+          "glue:CreatePartition",
+          "glue:BatchCreatePartition",
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+output "emr_instance_profile_name" {
+  value = aws_iam_instance_profile.emr.name
+}
+
+output "emr_instance_profile_role_arn" {
+  value = aws_iam_role.emr_instance_profile_role.arn
+}
+
+output "emr_service_role_name" {
+  value = aws_iam_role.emr_service_role.name
+}
