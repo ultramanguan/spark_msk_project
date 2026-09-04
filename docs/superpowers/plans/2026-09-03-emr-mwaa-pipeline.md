@@ -67,7 +67,7 @@ def main():
     spark = SparkSession.builder.appName("00_environment_setup").getOrCreate()
     cfg = PipelineConfig(schema=args.schema, base_path=args.base_path)
 
-    spark.sql(f"CREATE DATABASE IF NOT EXISTS `{cfg.schema}`")
+    spark.sql(f"CREATE DATABASE IF NOT EXISTS `{cfg.schema}` LOCATION '{cfg.path('tables')}'")
     spark.sql(f"USE `{cfg.schema}`")
     spark.conf.set("spark.sql.shuffle.partitions", "8")
     print("Spark version:", spark.version)
@@ -279,6 +279,7 @@ def main():
       orders LONG,
       revenue DOUBLE
     ) USING DELTA
+    LOCATION '{cfg.path("tables", "gold_revenue_windows_streaming")}'
     """)
 
     silver_for_gold = (
@@ -363,7 +364,7 @@ def main():
         assert spark.table(cfg.table("capstone_silver_events")).count() > 0, "silver produced no rows"
         assert spark.table(cfg.table("capstone_gold_revenue")).count() > 0, "gold produced no rows"
         assert_no_duplicate_keys(spark.table(cfg.table("capstone_silver_events")), ["event_id"])
-    except AssertionError as exc:
+    except (AssertionError, ValueError) as exc:
         print(f"Capstone validation FAILED: {exc}", file=sys.stderr)
         sys.exit(1)
 
@@ -452,6 +453,7 @@ DELTA_SPARK_CONF = [
     "--packages", "io.delta:delta-spark_2.12:3.1.0",
     "--conf", "spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension",
     "--conf", "spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog",
+    "--conf", f"spark.sql.warehouse.dir={BASE_PATH}/tables",
 ]
 
 

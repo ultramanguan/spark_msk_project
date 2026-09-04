@@ -52,7 +52,7 @@ def main():
         assert spark.table(cfg.table("capstone_silver_events")).count() > 0, "silver produced no rows"
         assert spark.table(cfg.table("capstone_gold_revenue")).count() > 0, "gold produced no rows"
         assert_no_duplicate_keys(spark.table(cfg.table("capstone_silver_events")), ["event_id"])
-    except AssertionError as exc:
+    except (AssertionError, ValueError) as exc:
         print(f"Capstone validation FAILED: {exc}", file=sys.stderr)
         sys.exit(1)
 

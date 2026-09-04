@@ -55,6 +55,7 @@ def main():
       orders LONG,
       revenue DOUBLE
     ) USING DELTA
+    LOCATION '{cfg.path("tables", "gold_revenue_windows_streaming")}'
     """)
 
     silver_for_gold = (

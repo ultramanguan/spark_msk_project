@@ -24,7 +24,7 @@ def main():
     spark = SparkSession.builder.appName("00_environment_setup").getOrCreate()
     cfg = PipelineConfig(schema=args.schema, base_path=args.base_path)
 
-    spark.sql(f"CREATE DATABASE IF NOT EXISTS `{cfg.schema}`")
+    spark.sql(f"CREATE DATABASE IF NOT EXISTS `{cfg.schema}` LOCATION '{cfg.path('tables')}'")
     spark.sql(f"USE `{cfg.schema}`")
     spark.conf.set("spark.sql.shuffle.partitions", "8")
     print("Spark version:", spark.version)

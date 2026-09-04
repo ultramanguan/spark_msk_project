@@ -15,9 +15,18 @@ Optional, with defaults matching Plan 1's Terraform variable defaults:
   - retail_lakehouse_emr_release_label    (default: emr-7.5.0)
   - retail_lakehouse_emr_instance_type    (default: m5.xlarge)
   - retail_lakehouse_schema               (default: retail_lakehouse)
+
+Prerequisites this DAG does not automate:
+  - The five emr_jobs/*.py scripts must be synced to S3 before this DAG can run, e.g.:
+      aws s3 sync emr_jobs/ s3://<bucket>/emr_jobs/
+    This isn't automated by this plan; it's expected to be handled by a later CI/CD plan.
+  - The EMR subnet (retail_lakehouse_subnet_id) must have outbound internet access (a NAT
+    gateway or equivalent) so that `--packages io.delta:...` can resolve from Maven Central
+    during Ivy dependency resolution. If the configured subnet has none, every step will fail
+    at submit time.
 """
 import itertools
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from airflow import DAG
 from airflow.decorators import task
@@ -53,6 +62,7 @@ DELTA_SPARK_CONF = [
     "--packages", "io.delta:delta-spark_2.12:3.1.0",
     "--conf", "spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension",
     "--conf", "spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog",
+    "--conf", f"spark.sql.warehouse.dir={BASE_PATH}/tables",
 ]
 
 
@@ -77,6 +87,7 @@ def get_step_id(step_ids, i):
 
 JOB_FLOW_OVERRIDES = {
     "Name": "retail-lakehouse-pipeline",
+    "LogUri": f"s3://{LAKEHOUSE_BUCKET}/emr-logs/pipeline/",
     "ReleaseLabel": EMR_RELEASE_LABEL,
     "Applications": [{"Name": "Spark"}, {"Name": "Hadoop"}],
     "Configurations": [
@@ -104,12 +115,17 @@ JOB_FLOW_OVERRIDES = {
         "KeepJobFlowAliveWhenNoSteps": True,
         "TerminationProtected": False,
     },
+    "AutoTerminationPolicy": {"IdleTimeout": 3600},
     "BootstrapActions": [
         {"Name": "install-retail-lakehouse", "ScriptBootstrapAction": {"Path": BOOTSTRAP_S3_URI, "Args": [WHEEL_S3_URI]}},
     ],
     "JobFlowRole": EMR_INSTANCE_PROFILE,
     "ServiceRole": EMR_SERVICE_ROLE,
     "VisibleToAllUsers": True,
+    "Tags": [
+        {"Key": "Project", "Value": "retail-lakehouse"},
+        {"Key": "Environment", "Value": "dev"},
+    ],
 }
 
 # Same order as resources/jobs.yml's task graph: 00 -> 01 -> 07 (fallback) -> 03 -> 06.
@@ -131,10 +147,12 @@ with DAG(
     start_date=datetime(2026, 1, 1, tzinfo=timezone.utc),
     catchup=False,
     tags=["retail-lakehouse"],
+    default_args={"execution_timeout": timedelta(hours=2)},
 ) as dag:
     create_cluster = EmrCreateJobFlowOperator(
         task_id="create_emr_cluster",
         job_flow_overrides=JOB_FLOW_OVERRIDES,
+        emr_conn_id=None,
     )
 
     add_steps = EmrAddStepsOperator(
@@ -147,7 +165,7 @@ with DAG(
         EmrStepSensor(
             task_id=f"wait_for_{step['Name']}",
             job_flow_id=create_cluster.output,
-            step_id=get_step_id(add_steps.output, i),
+            step_id=get_step_id.override(task_id=f"get_step_id_{step['Name']}")(add_steps.output, i),
         )
         for i, step in enumerate(STEPS)
     ]
