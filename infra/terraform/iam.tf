@@ -133,6 +133,10 @@ resource "aws_iam_role_policy" "emr_s3_access" {
           "s3:PutObject",
           "s3:DeleteObject",
           "s3:ListBucket",
+          "s3:GetBucketLocation",
+          "s3:AbortMultipartUpload",
+          "s3:ListBucketMultipartUploads",
+          "s3:ListMultipartUploadParts",
         ]
         Resource = [
           aws_s3_bucket.lakehouse.arn,
@@ -160,6 +164,7 @@ resource "aws_iam_role_policy" "emr_glue_access" {
           "glue:GetDatabase",
           "glue:GetDatabases",
           "glue:CreateDatabase",
+          "glue:UpdateDatabase",
           "glue:GetTable",
           "glue:GetTables",
           "glue:CreateTable",
@@ -167,8 +172,13 @@ resource "aws_iam_role_policy" "emr_glue_access" {
           "glue:DeleteTable",
           "glue:GetPartition",
           "glue:GetPartitions",
+          "glue:BatchGetPartition",
           "glue:CreatePartition",
           "glue:BatchCreatePartition",
+          "glue:UpdatePartition",
+          "glue:DeletePartition",
+          "glue:BatchDeletePartition",
+          "glue:GetUserDefinedFunctions",
         ]
         Resource = "*"
       }
