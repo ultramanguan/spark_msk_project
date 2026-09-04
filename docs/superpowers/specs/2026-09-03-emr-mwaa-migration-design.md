@@ -47,7 +47,14 @@ Databricks deploy plumbing that is specifically superseded by the new production
 ### Infrastructure (`infra/terraform/`)
 
 - **`s3.tf`** — unchanged.
-- **`msk.tf`** — unchanged (cluster, security group, IAM-auth client config).
+- **`msk.tf`** — small but necessary change: the ingress rule currently allows traffic from
+  `var.databricks_security_group_id`, an externally-supplied SG belonging to a Databricks cluster this
+  project no longer has. Replaced with a Terraform-managed `aws_security_group.emr_msk_client` — a
+  no-rules "marker" SG that any EMR cluster needing MSK access attaches as an additional security group
+  (the persistent learning cluster in `emr_learning.tf`, and the ephemeral production clusters MWAA
+  creates later). Its ID is exposed as a new output (`emr_msk_client_security_group_id`) for the Airflow
+  DAG (Plan 2) to reference. `var.databricks_security_group_id` is removed from `variables.tf` and
+  `terraform.tfvars.example`.
 - **`iam.tf`** — replaced. Drops the Unity Catalog service-credential role (self-assuming trust
   policy, External ID dance) entirely. Replaced with:
   - `aws_iam_role` for EMR's EC2 instance profile (trust policy: `ec2.amazonaws.com`)
