@@ -1,0 +1,35 @@
+name: Deploy AWS Artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: aws
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Build wheel
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+          python -m build
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+      - name: Upload wheel artifact
+        run: aws s3 cp dist/retail_lakehouse-*.whl "s3://${{ vars.LAKEHOUSE_BUCKET }}/artifacts/retail_lakehouse-latest.whl"
+      - name: Sync production Spark scripts
+        run: aws s3 sync emr_jobs/ "s3://${{ vars.LAKEHOUSE_BUCKET }}/emr_jobs/" --delete
+      - name: Sync MWAA DAGs
+        run: aws s3 sync airflow/dags/ "s3://${{ vars.LAKEHOUSE_BUCKET }}/airflow/dags/" --delete
+      # Deliberately does NOT run `terraform apply` -- infra changes stay a manual, reviewed step
+      # (see infra/terraform/README.md). This workflow only publishes application artifacts.
