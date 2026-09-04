@@ -39,13 +39,19 @@ Follow the printed steps to:
 **MSK Serverless bills continuously. Run `terraform destroy` (see `infra/terraform/README.md`) when you're
 done for the day.**
 
-## 3. Install the Kafka connector library on your cluster
+## 3. Install the Kafka connector library
 
 Databricks Runtime includes the core Spark-Kafka connector, but MSK IAM auth needs the
-`aws-msk-iam-auth` Maven library attached to the cluster:
+`aws-msk-iam-auth` Maven library available too: `software.amazon.msk:aws-msk-iam-auth:2.2.0`.
 
-- Maven coordinates: `software.amazon.msk:aws-msk-iam-auth:2.2.0`
-- Attach via cluster UI: Libraries -> Install New -> Maven -> paste coordinates.
+- **Classic cluster:** attach via cluster UI -> Libraries -> Install New -> Maven -> paste the coordinates above.
+- **Serverless compute** (this repo's `resources/jobs.yml` runs on serverless — workspaces that only
+  allow serverless reject classic `new_cluster` job definitions outright): the wheel is installed
+  automatically via the job's `environments.pipeline_env.spec.dependencies` block, but Maven/JVM library
+  support on serverless environments is still evolving — check your workspace's current Databricks docs
+  for whether it can be added there. If not, notebook `02`'s MSK ingest task may need to run on a classic
+  job cluster (a mixed compute job, with only that one task pinned to `new_cluster`) while the rest of the
+  pipeline stays serverless.
 
 ## 4. Package and run tests locally
 
@@ -90,8 +96,15 @@ databricks bundle deploy -t dev
 databricks bundle run retail_lakehouse_pipeline -t dev
 ```
 
-`resources/jobs.yml` chains `00` -> `01` -> `02` -> `03` -> `06` as a single job using the built wheel. Add a
-schedule block to the job resource, or trigger it from your orchestrator of choice, for a recurring run.
+`resources/jobs.yml` chains `00` -> `01` -> `streaming_ingest_fallback` -> `03` -> `06` as a single job on
+serverless compute, using the built wheel (attached via the job's `environments` block, not a cluster
+library). By default the streaming-ingest task runs notebook `07`'s file/rate fallback (no MSK required) —
+once `infra/terraform` is applied and you have a real bootstrap broker string, edit that task in
+`resources/jobs.yml` to point at `notebooks/02_kafka_msk_streaming_ingest.py` with
+`kafka_bootstrap_servers`/`kafka_topic` base_parameters instead, and update the downstream `bronze_table`
+base_parameter on the `streaming_silver_gold` task back to `bronze_clickstream_kafka`.
+
+Add a schedule block to the job resource, or trigger it from your orchestrator of choice, for a recurring run.
 
 ## 7. CI/CD
 

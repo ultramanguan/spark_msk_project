@@ -4,6 +4,27 @@
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ### Ensure `retail_lakehouse` is importable
+# MAGIC
+# MAGIC No-op when this runs as part of the deployed job (the wheel is already installed via
+# MAGIC `resources/jobs.yml`'s `environments` block). When running this notebook interactively, installs the
+# MAGIC wheel from the current user's `dev`-target bundle deployment. Placed before any other state is set up
+# MAGIC so that the `dbutils.library.restartPython()` below (needed for the newly installed package to be
+# MAGIC importable) has nothing to lose.
+
+# COMMAND ----------
+
+try:
+    import retail_lakehouse  # noqa: F401
+except ModuleNotFoundError:
+    _user = spark.sql("SELECT current_user()").first()[0]
+    _wheel = f"/Workspace/Users/{_user}/.bundle/retail_lakehouse/dev/files/dist/retail_lakehouse-0.1.0-py3-none-any.whl"
+    get_ipython().run_line_magic("pip", f"install {_wheel}")
+    dbutils.library.restartPython()
+
+# COMMAND ----------
+
 try:
     dbutils.widgets.text("catalog", "main", "Unity Catalog catalog")
     dbutils.widgets.text("schema", "retail_lakehouse", "Schema/database")
