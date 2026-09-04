@@ -20,6 +20,7 @@ import itertools
 from datetime import datetime, timezone
 
 from airflow import DAG
+from airflow.decorators import task
 from airflow.models import Variable
 from airflow.providers.amazon.aws.operators.emr import (
     EmrAddStepsOperator,
@@ -67,6 +68,11 @@ def spark_step(name, script, extra_args=None):
         "ActionOnFailure": "TERMINATE_CLUSTER",
         "HadoopJarStep": {"Jar": "command-runner.jar", "Args": args},
     }
+
+
+@task
+def get_step_id(step_ids, i):
+    return step_ids[i]
 
 
 JOB_FLOW_OVERRIDES = {
@@ -141,7 +147,7 @@ with DAG(
         EmrStepSensor(
             task_id=f"wait_for_{step['Name']}",
             job_flow_id=create_cluster.output,
-            step_id=add_steps.output[i],
+            step_id=get_step_id(add_steps.output, i),
         )
         for i, step in enumerate(STEPS)
     ]
