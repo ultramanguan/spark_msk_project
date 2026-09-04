@@ -49,12 +49,12 @@ cfg = PipelineConfig(catalog=catalog, schema=schema, base_path=base_path)
 spark.sql(f"USE CATALOG `{cfg.catalog}`")
 spark.sql(f"USE SCHEMA `{cfg.schema}`")
 
-# MAGIC %md
-# MAGIC # 01 — Batch lakehouse: bronze / silver / gold
-# MAGIC
-# MAGIC **Objective:** build the medallion pipeline from the batch seed files created in notebook 00, using
-# MAGIC the shared `retail_lakehouse` transformation functions (the exact same functions the streaming path in
-# MAGIC notebook 03 reuses for silver enrichment). This is the baseline to compare the streaming path against.
+%md
+# 01 — Batch lakehouse: bronze / silver / gold
+
+**Objective:** build the medallion pipeline from the batch seed files created in notebook 00, using
+the shared `retail_lakehouse` transformation functions (the exact same functions the streaming path in
+notebook 03 reuses for silver enrichment). This is the baseline to compare the streaming path against.
 
 # COMMAND ----------
 
@@ -70,6 +70,7 @@ customers = spark.table(cfg.table("dim_customer_seed"))
 print("Raw event rows:", raw_events.count())
 
 # COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Bronze — minimally transformed, ingestion metadata only
 
@@ -82,6 +83,7 @@ bronze.write.mode("overwrite").format("delta").partitionBy("_ingest_date").saveA
 display(spark.table(cfg.table("bronze_clickstream_batch")).limit(5))
 
 # COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Silver — normalized, validated, deduplicated
 
@@ -92,6 +94,7 @@ silver.write.mode("overwrite").format("delta").partitionBy("event_date").saveAsT
 print("Silver rows:", spark.table(cfg.table("silver_clickstream_batch")).count())
 
 # COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Gold — enriched with dimensions, aggregated to a business metric
 
@@ -106,6 +109,7 @@ gold.write.mode("overwrite").format("delta").saveAsTable(cfg.table("gold_revenue
 display(spark.table(cfg.table("gold_revenue_by_hour_batch")).orderBy(F.desc("revenue")))
 
 # COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Query plan check
 # MAGIC
@@ -117,6 +121,7 @@ display(spark.table(cfg.table("gold_revenue_by_hour_batch")).orderBy(F.desc("rev
 enriched.explain("formatted")
 
 # COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Next: the same medallion shape, built by streaming from MSK
 # MAGIC

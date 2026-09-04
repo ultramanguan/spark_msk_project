@@ -1,4 +1,11 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "5"
+# dependencies = [
+#   "/Workspace/Users/syghr1991@gmail.com/.bundle/retail_lakehouse/dev/files/dist/retail_lakehouse-0.1.0-py3-none-any.whl",
+# ]
+# ///
 # MAGIC %md
 # MAGIC > Retail Lakehouse — Production Pipeline (AWS Databricks + MSK + S3 + Delta)
 
@@ -49,6 +56,8 @@ cfg = PipelineConfig(catalog=catalog, schema=schema, base_path=base_path)
 
 print(f"catalog={cfg.catalog}, schema={cfg.schema}, base_path={cfg.base_path}")
 
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC # 00 — Environment setup
 # MAGIC
@@ -77,6 +86,7 @@ spark.conf.set("spark.sql.shuffle.partitions", "8")
 print("Spark version:", spark.version)
 
 # COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Generate seed data
 # MAGIC
@@ -107,6 +117,7 @@ print("Created seed tables and files")
 display(event_df.limit(10))
 
 # COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Tables created so far
 
@@ -115,6 +126,7 @@ display(event_df.limit(10))
 display(spark.sql(f"SHOW TABLES IN `{cfg.catalog}`.`{cfg.schema}`"))
 
 # COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Next steps
 # MAGIC
