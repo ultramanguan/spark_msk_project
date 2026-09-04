@@ -26,11 +26,6 @@ variable "subnet_ids" {
   type        = list(string)
 }
 
-variable "databricks_security_group_id" {
-  description = "Security group ID attached to your Databricks cluster ENIs, used to allow MSK broker port ingress. Find it in the Databricks workspace's VPC (usually named like <workspace>-worker-unmanaged or a customer-managed VPC SG)."
-  type        = string
-}
-
 variable "kafka_topics" {
   description = "Kafka topics to create for the pipeline"
   type = list(object({
@@ -49,8 +44,32 @@ variable "msk_kafka_version" {
   default     = "3.5.1"
 }
 
-variable "databricks_service_credential_external_id" {
-  description = "External ID for the Unity Catalog service credential's self-assuming trust policy. Leave as the placeholder \"0000\" for the first `terraform apply`; after registering the service credential in Databricks (see infra/terraform/iam.tf), set this to the real External ID Databricks generates and apply again."
+variable "emr_release_label" {
+  description = "EMR release label for both the persistent learning cluster and the ephemeral production clusters MWAA creates"
   type        = string
-  default     = "0000"
+  default     = "emr-7.5.0"
+}
+
+variable "emr_instance_type" {
+  description = "EC2 instance type for EMR master/core nodes. Keep small for training/demo use."
+  type        = string
+  default     = "m5.xlarge"
+}
+
+variable "emr_instance_count" {
+  description = "Number of EMR core nodes (the persistent learning cluster only -- ephemeral production cluster sizing lives in the Airflow DAG config)"
+  type        = number
+  default     = 2
+}
+
+variable "mwaa_airflow_version" {
+  description = "Managed Airflow version for the MWAA environment"
+  type        = string
+  default     = "2.10.3"
+}
+
+variable "mwaa_environment_class" {
+  description = "MWAA environment size. Keep small for training/demo use."
+  type        = string
+  default     = "mw1.small"
 }

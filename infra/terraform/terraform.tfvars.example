@@ -3,6 +3,5 @@ project_name = "retail-lakehouse"
 environment = "dev"
 
 # Fill these in for your account -- see README.md in this directory.
-vpc_id                        = "vpc-REPLACE_ME"
-subnet_ids                    = ["subnet-REPLACE_ME_1", "subnet-REPLACE_ME_2"]
-databricks_security_group_id  = "sg-REPLACE_ME"
+vpc_id     = "vpc-REPLACE_ME"
+subnet_ids = ["subnet-REPLACE_ME_1", "subnet-REPLACE_ME_2"]
