@@ -53,9 +53,22 @@ A retail company ingests clickstream and order events. Product and customer dime
 - AWS CLI configured locally if you want to run `terraform apply`/`deploy_aws.yml`'s steps by hand.
 - (Databricks track only) An AWS Databricks workspace with Unity Catalog enabled, Runtime 15.4 LTS+, and the Databricks CLI configured — see `RUNBOOK.md`.
 
+## CI/CD
+
+`.github/workflows/deploy_aws.yml` runs on every push to `main` (or manual dispatch) and publishes the
+wheel + `emr_jobs/` + `airflow/dags/` to S3 — it does not run `terraform apply` (that stays manual, see
+`infra/terraform/README.md`). It needs a GitHub Environment named `aws` with:
+
+- Secrets: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (credentials with S3 write access to the
+  lakehouse bucket).
+- Variables: `LAKEHOUSE_BUCKET` (required — from `terraform output lakehouse_bucket_name`),
+  `AWS_REGION` (optional, defaults to `us-east-1`).
+
+`scripts/deploy_aws.sh <bucket-name>` does the same thing locally, for a manual deploy without CI.
+
 ## Where to start
 
 1. **New to the concepts?** Read `class-emr/01_spark_batch_processing.ipynb` through `04_data_lakehouse_delta_s3.ipynb` on an EMR JupyterHub cluster (see `infra/terraform/emr_learning.tf`), or the Databricks-flavored `class/` if you're on that platform instead.
 2. **Want the production pipeline running?** `infra/terraform/` provisions everything (see `infra/terraform/README.md` — this costs real money, read it before applying). Once applied, `deploy_aws.yml` (or its manual equivalent) publishes the wheel and syncs `emr_jobs/`/`airflow/dags/`, and the MWAA DAG `retail_lakehouse_pipeline` runs the pipeline end to end.
-3. **Want to step through the pipeline interactively instead of watching it run as a scheduled job?** `emr-notebooks/00_environment_setup.ipynb` through `06_capstone_end_to_end.ipynb`, in order, on the same EMR JupyterHub cluster.
+3. **Want to step through the pipeline interactively instead of watching it run as a scheduled job?** `emr-notebooks/00_environment_setup.ipynb` through `06_capstone_end_to_end.ipynb`, in order, on the same EMR JupyterHub cluster. If MSK isn't provisioned yet, run `07_file_rate_streaming_fallback.ipynb` instead of `02_kafka_msk_streaming_ingest.ipynb` and point `03`'s `bronze_table` variable at `bronze_clickstream_rate`.
 4. **Working on the Databricks track specifically?** `RUNBOOK.md` has the exact Databricks setup steps; it predates the AWS-native track and stays accurate for that platform.

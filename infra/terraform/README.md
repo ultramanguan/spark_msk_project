@@ -54,9 +54,9 @@ profile in `iam.tf`, attached automatically to any cluster built from this Terra
   IAM ARN shapes for topics/consumer groups aren't simply derivable from the cluster ARN by string
   substitution across all AWS partitions, so double-check before relying on this in a real account.
 - `emr_learning.tf` — a persistent EMR cluster with JupyterHub, for interactive/teaching notebooks (see
-  `emr-notebooks/` and `class-emr/`, added in later plans). Bills continuously while running.
+  `emr-notebooks/` and `class-emr/`). Bills continuously while running.
 - `mwaa.tf` — the MWAA (managed Airflow) environment that orchestrates the production pipeline (see
-  `airflow/dags/`, added in a later plan). The webserver is set to `PUBLIC_ONLY` for simplicity in this
+  `airflow/dags/`). The webserver is set to `PUBLIC_ONLY` for simplicity in this
   demo/training context — MWAA still enforces IAM/console-login auth on top of that, but it's a step down
   from the SSM-only access pattern `emr_learning.tf` uses for JupyterHub. Switch to `PRIVATE_ONLY` plus a
   VPC-internal access path if that tradeoff doesn't fit your environment.

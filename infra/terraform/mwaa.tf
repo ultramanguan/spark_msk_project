@@ -1,6 +1,6 @@
-# MWAA (managed Airflow) for orchestrating the production pipeline. The DAG itself
-# (airflow/dags/retail_lakehouse_pipeline.py) is added in a later plan and synced to dag_s3_path below
-# by CI/CD (also a later plan) -- this task only provisions the environment.
+# MWAA (managed Airflow) for orchestrating the production pipeline. The DAG itself is at
+# airflow/dags/retail_lakehouse_pipeline.py, synced to dag_s3_path below by
+# .github/workflows/deploy_aws.yml on every deploy.
 #
 # Reuses the lakehouse S3 bucket under an airflow/ prefix rather than provisioning a separate bucket,
 # alongside the existing data/tables, data/checkpoints, data/source prefixes (see s3.tf).

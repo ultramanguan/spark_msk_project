@@ -3,8 +3,11 @@
 > **This runbook documents the Databricks track** (`class/`, `notebooks/`, Databricks Asset Bundle deploys).
 > That track is no longer the actively-deployed path -- production now runs on AWS-native EMR + MWAA
 > (`class-emr/`, `emr-notebooks/`, `emr_jobs/`, `airflow/dags/`, provisioned by `infra/terraform/`).
-> This runbook remains accurate for the Databricks track specifically; see the top-level `README.md`
-> for how the two tracks relate and where to start for the AWS-native one.
+> Kept here as a historical reference for the Databricks track's concepts and structure -- but its deploy
+> mechanics are stale: steps 6-7 reference `databricks.yml`/`resources/jobs.yml`/`deploy_databricks.yml`,
+> all removed once the AWS-native track became the actively-deployed path, and step 3's Unity Catalog
+> service-credential instructions reference Terraform outputs/variables that no longer exist. See the
+> top-level `README.md` for the AWS-native track's setup instead.
 
 This is the step-by-step to go from zero to a running end-to-end pipeline. Read `README.md` first for the
 overall structure.

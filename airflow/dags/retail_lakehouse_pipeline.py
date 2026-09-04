@@ -16,10 +16,12 @@ Optional, with defaults matching Plan 1's Terraform variable defaults:
   - retail_lakehouse_emr_instance_type    (default: m5.xlarge)
   - retail_lakehouse_schema               (default: retail_lakehouse)
 
+Deployment:
+  - The five emr_jobs/*.py scripts and this DAG file are synced to S3 automatically by
+    .github/workflows/deploy_aws.yml on every push to main (or manual dispatch, or
+    scripts/deploy_aws.sh locally) -- no manual `aws s3 sync` step needed in normal operation.
+
 Prerequisites this DAG does not automate:
-  - The five emr_jobs/*.py scripts must be synced to S3 before this DAG can run, e.g.:
-      aws s3 sync emr_jobs/ s3://<bucket>/emr_jobs/
-    This isn't automated by this plan; it's expected to be handled by a later CI/CD plan.
   - The EMR subnet (retail_lakehouse_subnet_id) must have outbound internet access (a NAT
     gateway or equivalent) so that `--packages io.delta:...` can resolve from Maven Central
     during Ivy dependency resolution. If the configured subnet has none, every step will fail

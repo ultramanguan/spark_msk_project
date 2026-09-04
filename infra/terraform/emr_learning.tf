@@ -1,6 +1,6 @@
-# Persistent EMR cluster with JupyterHub for interactive/teaching use (emr-notebooks/, class-emr/,
-# added in later plans). Cost note: this bills continuously while running, same as MSK -- destroy or
-# stop it when not actively in a learning session.
+# Persistent EMR cluster with JupyterHub for interactive/teaching use -- see emr-notebooks/ (production
+# pipeline walkthroughs) and class-emr/ (concept notebooks). Cost note: this bills continuously while
+# running, same as MSK -- destroy or stop it when not actively in a learning session.
 #
 # JupyterHub listens on port 9443 on the master node, but no inbound security group rule opens it to the
 # internet. Reach it via SSM port forwarding instead (no bastion/key pair/open ports needed -- the

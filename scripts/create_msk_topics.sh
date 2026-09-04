@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Creates the Kafka topics required by the pipeline against a live MSK Serverless cluster using
-# IAM authentication. Run from any host with network access to the MSK cluster (a Databricks
-# notebook %sh cell, an EC2 instance in the same VPC, or your laptop if peered/VPN'd in).
+# IAM authentication. Run from any host with network access to the MSK cluster (an EMR Jupyter
+# %%bash cell, an EC2 instance in the same VPC, or your laptop if peered/VPN'd in).
 #
 # Requires: Kafka CLI tools (kafka-topics.sh, from a Kafka/Confluent distribution) and the
 # aws-msk-iam-auth jar on the classpath. See:

@@ -17,8 +17,8 @@ output "next_steps" {
        learning cluster in emr_learning.tf, and the ephemeral production clusters MWAA creates) already
        have MSK access via the EC2 instance profile in iam.tf.
 
-    4. Interactive learning notebooks (emr-notebooks/, added in a later plan) take the bootstrap-brokers
-       string from step 1 as a plain notebook variable -- no widget/credential-name setup required.
+    4. Interactive learning notebooks (emr-notebooks/) take the bootstrap-brokers string from step 1
+       as a plain notebook variable -- no widget/credential-name setup required.
   EOT
 }
 
