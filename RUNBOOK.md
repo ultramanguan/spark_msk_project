@@ -33,25 +33,36 @@ terraform output next_steps
 Follow the printed steps to:
 1. Fetch the MSK bootstrap broker string.
 2. Create the `retail-clickstream` topic (`scripts/create_msk_topics.sh <bootstrap-brokers>`).
-3. Attach the generated IAM policy (`databricks_msk_access_policy_arn` output) to your Databricks cluster's
-   instance profile role, and set that instance profile on the cluster you'll run notebooks on.
+3. Register the Unity Catalog service credential Databricks uses to authenticate to MSK (see step 3 below
+   for the full two-phase explanation).
 
 **MSK Serverless bills continuously. Run `terraform destroy` (see `infra/terraform/README.md`) when you're
 done for the day.**
 
-## 3. Install the Kafka connector library
+## 3. Grant Databricks access to MSK via a Unity Catalog service credential
 
-Databricks Runtime includes the core Spark-Kafka connector, but MSK IAM auth needs the
-`aws-msk-iam-auth` Maven library available too: `software.amazon.msk:aws-msk-iam-auth:2.2.0`.
+MSK IAM auth on serverless compute doesn't use a classic cluster instance profile or a manually-attached
+`aws-msk-iam-auth` Maven library — Databricks' Kafka connector handles IAM auth internally via the
+`databricks.serviceCredential` option (Databricks Runtime 16.1+), backed by a Unity Catalog **service
+credential**. `infra/terraform/iam.tf` provisions the IAM role; registering it in Databricks is a two-phase
+process because the role's self-assuming trust policy needs an External ID that Databricks only generates
+after the role exists:
 
-- **Classic cluster:** attach via cluster UI -> Libraries -> Install New -> Maven -> paste the coordinates above.
-- **Serverless compute** (this repo's `resources/jobs.yml` runs on serverless — workspaces that only
-  allow serverless reject classic `new_cluster` job definitions outright): the wheel is installed
-  automatically via the job's `environments.pipeline_env.spec.dependencies` block, but Maven/JVM library
-  support on serverless environments is still evolving — check your workspace's current Databricks docs
-  for whether it can be added there. If not, notebook `02`'s MSK ingest task may need to run on a classic
-  job cluster (a mixed compute job, with only that one task pinned to `new_cluster`) while the rest of the
-  pipeline stays serverless.
+1. `terraform apply` (already done in step 2) creates the role with a placeholder trust policy.
+2. In Databricks: Catalog Explorer -> External Data -> Credentials -> Create credential -> Service
+   Credential, using the ARN from `terraform output databricks_msk_service_credential_role_arn`. Copy the
+   generated External ID.
+3. Set `databricks_service_credential_external_id` in `terraform.tfvars` to that value and
+   `terraform apply` again to finalize the self-assuming trust policy.
+4. Back in Databricks, select the credential and run "Validate configuration".
+5. Note the service credential's name — you'll set it as the `kafka_service_credential` widget in
+   `notebooks/02_kafka_msk_streaming_ingest.py` in step 5.
+
+If your Databricks Runtime is older than 16.1 (unlikely on serverless, but possible on a classic cluster),
+`databricks.serviceCredential` isn't available — fall back to `kafka_auth_mode=SASL_SCRAM` on that notebook
+instead, which needs a `retail-lakehouse` Databricks secret scope with `msk-scram-username`/
+`msk-scram-password` keys, and `client_authentication.sasl.scram` enabled in `infra/terraform/msk.tf`
+(not configured there by default).
 
 ## 4. Package and run tests locally
 
@@ -76,6 +87,7 @@ schema = retail_lakehouse
 base_path = s3://<your-lakehouse-bucket>/data   (from `terraform output lakehouse_bucket_name`)
 kafka_bootstrap_servers = <from step 2>          (only needed for notebook 02)
 kafka_topic = retail-clickstream
+kafka_service_credential = <name from step 3>    (only needed for notebook 02, IAM auth mode)
 ```
 
 Run in order: `00` -> `01` -> `02` -> `03` -> `04` -> `05` -> `06`. If MSK isn't provisioned yet, run `07`
@@ -131,8 +143,9 @@ run `%pip install -e .` from the repo root in a notebook cell, or attach the bui
 (`dist/retail_lakehouse-*.whl`) to the cluster as a library. Bundle-deployed jobs install the wheel
 automatically per `resources/jobs.yml`.
 
-**`Kafka source not found` / class not found errors** — Ensure the `aws-msk-iam-auth` Maven library (step 3)
-is attached to the cluster, not just present in your local pip environment — it's a JVM-side dependency.
+**`Kafka source not found` / auth errors on notebook 02** — Confirm the `kafka_service_credential` widget
+names a service credential that's been registered *and validated* in Databricks (step 3), and that its IAM
+role's policy (`infra/terraform/iam.tf`) actually grants access to your specific MSK cluster ARN.
 
 **`kafka_bootstrap_servers` widget raises immediately** — expected: notebook 02 fails fast rather than
 silently no-op'ing when MSK isn't configured. Use notebook 07's fallback, or complete step 2.

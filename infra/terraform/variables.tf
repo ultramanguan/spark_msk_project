@@ -48,3 +48,9 @@ variable "msk_kafka_version" {
   type        = string
   default     = "3.5.1"
 }
+
+variable "databricks_service_credential_external_id" {
+  description = "External ID for the Unity Catalog service credential's self-assuming trust policy. Leave as the placeholder \"0000\" for the first `terraform apply`; after registering the service credential in Databricks (see infra/terraform/iam.tf), set this to the real External ID Databricks generates and apply again."
+  type        = string
+  default     = "0000"
+}

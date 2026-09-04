@@ -13,10 +13,17 @@ output "next_steps" {
 
        See ../../scripts/create_msk_topics.sh for a wrapper and a sample client.properties for IAM auth.
 
-    3. Attach the IAM policy at `databricks_msk_access_policy_arn` to your Databricks cluster's instance
-       profile role, and set that instance profile on the cluster running the pipeline notebooks.
+    3. Register the Unity Catalog service credential Databricks uses to authenticate to MSK (this replaces
+       instance-profile attachment -- required for serverless compute):
+       a. In Databricks: Catalog Explorer -> External Data -> Credentials -> Create credential ->
+          Service Credential, using the role ARN from `terraform output databricks_msk_service_credential_role_arn`.
+       b. Copy the External ID Databricks generates, set it as `databricks_service_credential_external_id`
+          in terraform.tfvars, and run `terraform apply` again to finalize the self-assuming trust policy.
+       c. Back in Databricks, select the credential and run its "Validate configuration" check.
+       See infra/terraform/iam.tf for the full two-phase explanation.
 
-    4. Set the kafka_bootstrap_servers widget in notebooks/02_kafka_msk_streaming_ingest.py to the value
-       from step 1.
+    4. Set notebooks/02_kafka_msk_streaming_ingest.py's widgets: `kafka_bootstrap_servers` to the value
+       from step 1, and `kafka_service_credential` to the credential name you chose in step 3.
   EOT
 }
+

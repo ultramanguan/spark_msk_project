@@ -32,6 +32,7 @@ try:
     dbutils.widgets.text("kafka_bootstrap_servers", "", "MSK bootstrap broker string, e.g. b-1.xxx.kafka.us-east-1.amazonaws.com:9098")
     dbutils.widgets.text("kafka_topic", "retail-clickstream", "MSK topic name")
     dbutils.widgets.dropdown("kafka_auth_mode", "IAM", ["IAM", "SASL_SCRAM", "PLAINTEXT_DEV_ONLY"], "MSK auth mode")
+    dbutils.widgets.text("kafka_service_credential", "retail-lakehouse-dev-msk-access", "Unity Catalog service credential name (IAM auth mode)")
     dbutils.widgets.text("starting_offsets", "earliest", "earliest or latest")
 except Exception:
     pass
@@ -47,6 +48,7 @@ if not base_path:
 bootstrap = dbutils.widgets.get("kafka_bootstrap_servers") if "dbutils" in globals() else ""
 topic = dbutils.widgets.get("kafka_topic") if "dbutils" in globals() else "retail-clickstream"
 auth_mode = dbutils.widgets.get("kafka_auth_mode") if "dbutils" in globals() else "IAM"
+service_credential = dbutils.widgets.get("kafka_service_credential") if "dbutils" in globals() else "retail-lakehouse-dev-msk-access"
 starting_offsets = dbutils.widgets.get("starting_offsets") if "dbutils" in globals() else "earliest"
 
 from retail_lakehouse.config import PipelineConfig
@@ -68,10 +70,12 @@ spark.sql(f"USE SCHEMA `{cfg.schema}`")
 # MAGIC    step 2) or manually.
 # MAGIC 3. Producer traffic on that topic — run `scripts/seed_kafka_topic.py` to produce synthetic events, or
 # MAGIC    point a real producer at it.
-# MAGIC 4. IAM auth is the default (recommended for MSK + Databricks on AWS): the cluster needs the
-# MAGIC    `aws-msk-iam-auth` library and an instance profile with `kafka-cluster:*` MSK IAM policy actions
-# MAGIC    scoped to this cluster/topic. See `infra/terraform/iam.tf` for the exact IAM policy JSON, and
-# MAGIC    `RUNBOOK.md` step 2 for how to attach it to your cluster.
+# MAGIC 4. IAM auth is the default (recommended for MSK + Databricks on AWS, including serverless compute):
+# MAGIC    a Unity Catalog service credential backed by an IAM role with `kafka-cluster:*` MSK actions scoped
+# MAGIC    to this cluster/topic. See `infra/terraform/iam.tf` for the exact role/policy, and `RUNBOOK.md`
+# MAGIC    step 3 for registering it as a service credential in Databricks. No `aws-msk-iam-auth` library or
+# MAGIC    instance profile needed -- Databricks' Kafka connector handles this internally via the
+# MAGIC    `databricks.serviceCredential` option (requires Databricks Runtime 16.1+).
 # MAGIC
 # MAGIC If you don't have MSK provisioned yet, this notebook will raise a clear error rather than silently doing
 # MAGIC nothing — use `notebooks/01_batch_lakehouse_bronze_silver_gold.py` to keep working on the rest of the
@@ -105,13 +109,7 @@ reader = (
 )
 
 if auth_mode == "IAM":
-    reader = (
-        reader
-        .option("kafka.security.protocol", "SASL_SSL")
-        .option("kafka.sasl.mechanism", "AWS_MSK_IAM")
-        .option("kafka.sasl.jaas.config", "software.amazon.msk.auth.iam.IAMLoginModule required;")
-        .option("kafka.sasl.client.callback.handler.class", "software.amazon.msk.auth.iam.IAMClientCallbackHandler")
-    )
+    reader = reader.option("databricks.serviceCredential", service_credential)
 elif auth_mode == "SASL_SCRAM":
     scram_username = dbutils.secrets.get(scope="retail-lakehouse", key="msk-scram-username")
     scram_password = dbutils.secrets.get(scope="retail-lakehouse", key="msk-scram-password")

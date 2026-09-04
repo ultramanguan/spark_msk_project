@@ -37,7 +37,7 @@ terraform output next_steps
 ```
 
 Follow the printed `next_steps` output — it walks through fetching bootstrap brokers, creating the Kafka
-topic, and attaching the IAM policy to your Databricks cluster's instance profile.
+topic, and registering the Unity Catalog service credential Databricks uses to authenticate to MSK.
 
 ## Files
 
@@ -45,10 +45,12 @@ topic, and attaching the IAM policy to your Databricks cluster's instance profil
 - `variables.tf` — all inputs; see `terraform.tfvars.example` for a starting point.
 - `s3.tf` — the lakehouse bucket, versioning, encryption, public access block, checkpoint lifecycle rule.
 - `msk.tf` — MSK Serverless cluster + its security group (IAM auth, port 9098 from the Databricks SG only).
-- `iam.tf` — the policy a Databricks cluster instance profile needs to connect/read/write the MSK cluster
-  and topics. **Verify the rendered topic/group ARNs in the AWS console after apply** — MSK IAM ARN shapes
-  for topics/consumer groups aren't simply derivable from the cluster ARN by string substitution across all
-  AWS partitions, so double-check before relying on this in a real account.
+- `iam.tf` — the IAM role + policy backing a Unity Catalog *service credential* (the serverless-compatible
+  replacement for a classic cluster instance profile) that lets Databricks connect/read/write the MSK
+  cluster and topics. Registering the role as a service credential in Databricks is a two-phase process —
+  see the comments at the top of `iam.tf`. **Verify the rendered topic/group ARNs in the AWS console after
+  apply** — MSK IAM ARN shapes for topics/consumer groups aren't simply derivable from the cluster ARN by
+  string substitution across all AWS partitions, so double-check before relying on this in a real account.
 - `outputs.tf` — the `next_steps` runbook text printed after apply.
 
 ## Teardown
