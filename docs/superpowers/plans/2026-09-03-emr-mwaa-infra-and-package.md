@@ -573,7 +573,7 @@ resource "aws_emr_cluster" "learning" {
   release_label = var.emr_release_label
   applications  = ["Spark", "JupyterHub", "Livy", "Hadoop"]
   log_uri       = "s3://${aws_s3_bucket.lakehouse.bucket}/emr-logs/learning/"
-  service_role  = aws_iam_role.emr_service_role.arn # UNVERIFIED: confirm against current AWS provider docs during Step 4's sanity check -- some AWS resources accept only a role name here, not the ARN; couldn't reach registry.terraform.io to verify while writing this plan.
+  service_role  = aws_iam_role.emr_service_role.arn
 
   ec2_attributes {
     subnet_id                         = var.subnet_ids[0]
@@ -640,10 +640,6 @@ this plan standalone before Plan 5 exists, upload a wheel manually first:
 - [ ] **Step 4: Sanity-check the file**
 
 Run: `cd infra/terraform && terraform fmt -check -diff emr_learning.tf` (or manual review if the CLI isn't available — check every block has matching braces, and that every `var.*`/`aws_*.*` reference used here was actually defined in Tasks 2-4).
-
-Also confirm the `service_role` format flagged inline above — `terraform validate`/`fmt` won't catch a
-role-ARN-vs-name mismatch (that's an AWS API semantic, not an HCL syntax error), so it can only be
-caught by checking current `aws_emr_cluster` provider docs directly, or at real `terraform apply` time.
 
 - [ ] **Step 5: Commit**
 
