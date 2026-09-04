@@ -11,6 +11,7 @@ This project has two parallel tracks, teaching the same concepts on two differen
    - `emr-notebooks/` — the same production pipeline, ported for interactive step-by-step learning on EMR JupyterHub.
    - `emr_jobs/` + `airflow/dags/` — the actual production pipeline: plain Spark scripts run as EMR Steps, orchestrated by an MWAA (managed Airflow) DAG on an ephemeral EMR cluster.
    - `infra/terraform/` — S3, MSK Serverless, EMR (a persistent learning cluster + the IAM/security groups ephemeral clusters attach), and the MWAA environment.
+   - See `RUNBOOK_AWS.md` for the exact setup steps.
 
 Both tracks share the same underlying package (`src/retail_lakehouse/`) and the same scenario:
 
@@ -39,7 +40,8 @@ project1/
 ├── scripts/                     # Local dev, deploy, and teardown helpers
 ├── .github/workflows/            # CI (test/build/lint) and CD (deploy_aws.yml)
 ├── pyproject.toml                # Package build/test config
-└── RUNBOOK.md                    # Step-by-step run order for the Databricks track
+├── RUNBOOK.md                    # Step-by-step run order for the Databricks track
+└── RUNBOOK_AWS.md                # Step-by-step run order for the AWS-native track
 ```
 
 ## Scenario
@@ -69,6 +71,6 @@ wheel + `emr_jobs/` + `airflow/dags/` to S3 — it does not run `terraform apply
 ## Where to start
 
 1. **New to the concepts?** Read `class-emr/01_spark_batch_processing.ipynb` through `04_data_lakehouse_delta_s3.ipynb` on an EMR JupyterHub cluster (see `infra/terraform/emr_learning.tf`), or the Databricks-flavored `class/` if you're on that platform instead.
-2. **Want the production pipeline running?** `infra/terraform/` provisions everything (see `infra/terraform/README.md` — this costs real money, read it before applying). Once applied, `deploy_aws.yml` (or its manual equivalent) publishes the wheel and syncs `emr_jobs/`/`airflow/dags/`, and the MWAA DAG `retail_lakehouse_pipeline` runs the pipeline end to end.
+2. **Want the production pipeline running?** `infra/terraform/` provisions everything (see `infra/terraform/README.md` — this costs real money, read it before applying). Once applied, `deploy_aws.yml` (or its manual equivalent) publishes the wheel and syncs `emr_jobs/`/`airflow/dags/`, and the MWAA DAG `retail_lakehouse_pipeline` runs the pipeline end to end. See `RUNBOOK_AWS.md` for the exact steps.
 3. **Want to step through the pipeline interactively instead of watching it run as a scheduled job?** `emr-notebooks/00_environment_setup.ipynb` through `06_capstone_end_to_end.ipynb`, in order, on the same EMR JupyterHub cluster. If MSK isn't provisioned yet, run `07_file_rate_streaming_fallback.ipynb` instead of `02_kafka_msk_streaming_ingest.ipynb` and point `03`'s `bronze_table` variable at `bronze_clickstream_rate`.
 4. **Working on the Databricks track specifically?** `RUNBOOK.md` covers that track's concepts and structure, but its deploy-mechanics steps (3, 6-7) are stale -- see the banner at the top of `RUNBOOK.md` for specifics.

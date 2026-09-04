@@ -5,7 +5,7 @@ output "next_steps" {
 
     2. Create the Kafka topic(s) using the Kafka admin CLI (Terraform's AWS provider has no native MSK
        topic resource). From a host with network access to the cluster (e.g. an EC2 instance in the same
-       VPC, or Databricks itself via a one-off notebook cell):
+       VPC, or EMR itself via a Jupyter %%bash cell):
 
        kafka-topics.sh --bootstrap-server <bootstrap-brokers> \
          --command-config client.properties \
