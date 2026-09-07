@@ -190,6 +190,17 @@ session.
 `s3://<bucket>/artifacts/retail_lakehouse-latest.whl`; if that key doesn't exist yet, run step 7 first,
 then recreate the cluster (the bootstrap action only runs at cluster creation).
 
+**EMR `BOOTSTRAP_FAILURE` on "bootstrap action 2" with `curl: (22) The requested URL returned error: 404`
+in the log** — `install_kafka_cli.sh` originally fetched the aws-msk-iam-auth jar from
+`github.com/aws/aws-msk-iam-auth/releases/latest/download/aws-msk-iam-auth-all.jar`, which 404s
+unconditionally: that project doesn't publish an unversioned `-all.jar` filename under a "latest" alias,
+only versioned ones per release. Fixed by pointing at Maven Central's stable, versioned URL instead
+(`repo1.maven.org/maven2/software/amazon/msk/aws-msk-iam-auth/<version>/aws-msk-iam-auth-<version>-all.jar`),
+pinned to the same `2.2.0` the notebook's `%%configure` cell already uses for the same jar via Spark's
+package resolver. General lesson: don't trust a "latest"-alias download URL without actually resolving it
+once — GitHub's `releases/latest/download/<name>` only works if `<name>` is exactly what that project
+attaches to every release, which isn't a safe assumption for projects that version their asset filenames.
+
 **EMR `BOOTSTRAP_FAILURE` with `ERROR: retail_lakehouse-latest.whl is not a valid wheel filename` in the
 bootstrap action's `stderr.gz`** (find it at
 `s3://<bucket>/emr-logs/learning/<cluster-id>/node/<instance-id>/bootstrap-actions/1/stderr.gz`) — this is

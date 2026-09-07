@@ -3,6 +3,7 @@ pyproject.toml
 src/retail_lakehouse/__init__.py
 src/retail_lakehouse/config.py
 src/retail_lakehouse/generate.py
+src/retail_lakehouse/kafka_admin.py
 src/retail_lakehouse/quality.py
 src/retail_lakehouse/schemas.py
 src/retail_lakehouse/streaming.py
@@ -13,6 +14,7 @@ src/retail_lakehouse.egg-info/dependency_links.txt
 src/retail_lakehouse.egg-info/requires.txt
 src/retail_lakehouse.egg-info/top_level.txt
 tests/test_config.py
+tests/test_kafka_admin.py
 tests/test_kafka_parsing.py
 tests/test_streaming.py
 tests/test_transformations.py

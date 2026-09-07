@@ -13,3 +13,4 @@ Requires-Dist: build>=1.0; extra == "dev"
 Requires-Dist: ruff>=0.6.0; extra == "dev"
 Provides-Extra: kafka
 Requires-Dist: kafka-python>=2.0.2; extra == "kafka"
+Requires-Dist: aws-msk-iam-sasl-signer-python>=1.0.1; extra == "kafka"
