@@ -14,6 +14,10 @@ venv/
 .coverage
 htmlcov/
 
+# Python build artifacts
+build/
+dist/
+
 # Databricks Asset Bundle local state
 .databricks/
 
