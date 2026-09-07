@@ -17,7 +17,12 @@ session.** Don't leave any of this running.
 
 ## Prerequisites
 
-1. An AWS account and credentials configured for Terraform (`aws configure` or equivalent env vars).
+1. An AWS account and credentials configured for Terraform (`aws configure` or equivalent env vars). If the
+   AWS CLI isn't installed yet:
+   ```bash
+   brew install awscli
+   aws configure   # or `aws sso login` / AWS_* env vars
+   ```
 2. Terraform CLI installed. It's no longer in homebrew-core (HashiCorp pulled it after their license
    change), so install it from HashiCorp's own tap:
    ```bash

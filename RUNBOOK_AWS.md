@@ -20,7 +20,11 @@ this path.
 
 - An AWS account with permission to create S3 buckets, an MSK Serverless cluster, EMR clusters, an MWAA
   environment, and IAM roles.
-- AWS credentials configured locally (`aws configure` or equivalent env vars).
+- AWS CLI installed and credentials configured locally:
+  ```bash
+  brew install awscli
+  aws configure   # or `aws sso login` / AWS_* env vars
+  ```
 - Terraform CLI installed. It's no longer in homebrew-core (HashiCorp pulled it after their license
   change), so install it from HashiCorp's own tap:
   ```bash

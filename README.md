@@ -52,13 +52,17 @@ A retail company ingests clickstream and order events. Product and customer dime
 
 - AWS account with permission to create S3 buckets, an MSK cluster, EMR clusters, an MWAA environment, and IAM roles (see `infra/terraform/`).
 - Python 3.10+ locally for packaging/tests.
+- AWS CLI, if you want to run `terraform apply`/`deploy_aws.yml`'s steps by hand:
+  ```bash
+  brew install awscli
+  aws configure   # or `aws sso login` / AWS_* env vars
+  ```
 - Terraform CLI, if you want to run `terraform apply` yourself. It's no longer in homebrew-core (HashiCorp
   pulled it after their license change), so install it from HashiCorp's own tap:
   ```bash
   brew tap hashicorp/tap
   brew install hashicorp/tap/terraform
   ```
-- AWS CLI configured locally if you want to run `terraform apply`/`deploy_aws.yml`'s steps by hand.
 - (Databricks track only) An AWS Databricks workspace with Unity Catalog enabled, Runtime 15.4 LTS+, and the Databricks CLI configured — see `RUNBOOK.md`.
 
 ## CI/CD
