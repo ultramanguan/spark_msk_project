@@ -58,8 +58,7 @@ A retail company ingests clickstream and order events. Product and customer dime
   aws configure   # or `aws sso login` / AWS_* env vars
   ```
 - Session Manager plugin, if you'll need to `aws ssm start-session` into an EMR node (e.g. to reach
-  JupyterHub, or to create the MSK Kafka topic — see `RUNBOOK_AWS.md`). The base AWS CLI can't open an
-  interactive session on its own:
+  JupyterHub — see `RUNBOOK_AWS.md`). The base AWS CLI can't open an interactive session on its own:
   ```bash
   brew install --cask session-manager-plugin
   ```
