@@ -116,27 +116,17 @@ Use the `PySpark` kernel for every notebook below.
 
 ## 6. Run the notebooks
 
-**Get the notebooks onto the cluster first.** JupyterHub's workspace on a fresh cluster is empty — only
-its own internal state (`jupyterhub.sqlite`, `jupyterhub-proxy.pid`, `jupyterhub_cookie_secret`) lives
-there by default. Nothing in this Terraform or CI syncs `emr-notebooks/`/`class-emr/` there automatically
-— unlike `emr_jobs/`/`airflow/dags/`, which `deploy_aws.yml` pushes to S3 for the automated pipeline,
-these are meant for interactive human editing, so getting them onto the node is a manual step.
+`emr-notebooks/`/`class-emr/` land in JupyterHub's file browser automatically — `emr_learning.tf` uploads
+every `*.ipynb` to S3 via Terraform (`aws_s3_object.emr_notebooks`/`class_emr_notebooks`) and an EMR step
+(`sync_notebooks`, runs once the cluster and JupyterHub are fully up) pulls them into `jovyan`'s home
+directory at cluster creation. Nothing to do here on a fresh cluster — just open JupyterHub and they're
+there.
 
-From your laptop, push them to S3:
-```bash
-BUCKET=$(terraform -chdir=infra/terraform output -raw lakehouse_bucket_name)
-aws s3 sync emr-notebooks/ "s3://$BUCKET/notebooks/emr-notebooks/"
-aws s3 sync class-emr/ "s3://$BUCKET/notebooks/class-emr/"
-```
-
-Then, from a **terminal inside JupyterHub** (File → New → Terminal — not your laptop's terminal), pull
-them onto the node:
-```bash
-aws s3 sync s3://<bucket>/notebooks/emr-notebooks/ ~/emr-notebooks/
-aws s3 sync s3://<bucket>/notebooks/class-emr/ ~/class-emr/
-```
-The instance profile from `iam.tf` already grants S3 access, so no credentials to configure there either.
-Re-run this `sync` any time you edit a notebook locally and want the update reflected on the cluster.
+If you edit a notebook locally afterward and want that change reflected on an already-running cluster
+(the step only runs once, at creation, so it won't pick up later edits on its own), re-sync manually: push
+from your laptop with `aws s3 sync emr-notebooks/ "s3://$BUCKET/notebooks/emr-notebooks/"` (same for
+`class-emr/`), then pull from a **terminal inside JupyterHub** (File → New → Terminal) with
+`aws s3 sync "s3://$BUCKET/notebooks/emr-notebooks/" ~/emr-notebooks/`.
 
 In each notebook's first real code cell, set `base_path` to `s3://<bucket>/data` (from
 `terraform output lakehouse_bucket_name`) — every notebook has a `s3://<your-lakehouse-bucket>/...`
