@@ -11,4 +11,7 @@ WHEEL_S3_URI="${1:?Usage: install_retail_lakehouse.sh <s3://bucket/artifacts/ret
 LOCAL_WHEEL="/tmp/retail_lakehouse-0.0.0-py3-none-any.whl"
 
 aws s3 cp "$WHEEL_S3_URI" "$LOCAL_WHEEL"
-sudo pip3 install --upgrade "$LOCAL_WHEEL"
+# [kafka] extra pulls in kafka-python + aws-msk-iam-sasl-signer-python, so
+# retail_lakehouse.kafka_admin.create_topics(...) works out of the box on every node -- an importable
+# alternative to shelling out to kafka-topics.sh for topic administration.
+sudo pip3 install --upgrade "${LOCAL_WHEEL}[kafka]"

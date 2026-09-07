@@ -25,6 +25,16 @@ resource "aws_s3_object" "bootstrap_script" {
   etag   = filemd5("${path.module}/bootstrap/install_retail_lakehouse.sh")
 }
 
+# Installs kafka-topics.sh + the aws-msk-iam-auth jar so MSK admin commands (e.g. creating the
+# retail-clickstream topic, see RUNBOOK_AWS.md step 3) work directly from an SSM session on this node,
+# without the manual per-session setup that step used to require.
+resource "aws_s3_object" "kafka_cli_bootstrap_script" {
+  bucket = aws_s3_bucket.lakehouse.id
+  key    = "bootstrap/install_kafka_cli.sh"
+  source = "${path.module}/bootstrap/install_kafka_cli.sh"
+  etag   = filemd5("${path.module}/bootstrap/install_kafka_cli.sh")
+}
+
 resource "aws_emr_cluster" "learning" {
   name          = "${var.project_name}-${var.environment}-learning"
   release_label = var.emr_release_label
@@ -58,6 +68,11 @@ resource "aws_emr_cluster" "learning" {
     name = "install-retail-lakehouse"
     path = "s3://${aws_s3_bucket.lakehouse.bucket}/${aws_s3_object.bootstrap_script.key}"
     args = ["s3://${aws_s3_bucket.lakehouse.bucket}/artifacts/retail_lakehouse-latest.whl"]
+  }
+
+  bootstrap_action {
+    name = "install-kafka-cli"
+    path = "s3://${aws_s3_bucket.lakehouse.bucket}/${aws_s3_object.kafka_cli_bootstrap_script.key}"
   }
 
   configurations_json = jsonencode([

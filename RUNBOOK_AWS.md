@@ -25,6 +25,12 @@ this path.
   brew install awscli
   aws configure   # or `aws sso login` / AWS_* env vars
   ```
+- Session Manager plugin, needed for `aws ssm start-session` (used in step 3 to create the MSK Kafka
+  topic, and to reach EMR's JupyterHub in step 5/6) — the base AWS CLI can't open an interactive session
+  on its own:
+  ```bash
+  brew install --cask session-manager-plugin
+  ```
 - Terraform CLI installed. It's no longer in homebrew-core (HashiCorp pulled it after their license
   change), so install it from HashiCorp's own tap:
   ```bash
@@ -88,38 +94,57 @@ aws emr list-instances --cluster-id $(terraform output -raw emr_learning_cluster
 aws ssm start-session --target <instance-id>
 ```
 
-The EMR node doesn't ship the Kafka CLI by default either (`applications` in `emr_learning.tf` is
-Spark/JupyterHub/Livy/Hadoop, not Kafka), so fetch it once inside that SSM session:
+`emr_learning.tf`'s second bootstrap action (`install_kafka_cli.sh`) installs `kafka-topics.sh` and the
+aws-msk-iam-auth jar automatically at cluster creation, so nothing further needs installing once you're in
+that SSM session — just run:
+
+```bash
+BOOTSTRAP_BROKERS="<paste-the-bootstrap-brokers-string-here>"
+kafka-topics.sh --bootstrap-server "$BOOTSTRAP_BROKERS" \
+  --command-config /opt/kafka/client.properties \
+  --create --if-not-exists --topic retail-clickstream --partitions 6 --replication-factor 3
+```
+
+No separate AWS credential setup is needed on the EMR node — the instance profile from `iam.tf` supplies
+MSK IAM auth ambiently, same as everything else on this cluster.
+
+**Alternative: create the topic from Python instead of the CLI.** The bootstrap action in
+`install_retail_lakehouse.sh` installs the wheel with its `[kafka]` extra
+(`kafka-python` + `aws-msk-iam-sasl-signer-python`), so `retail_lakehouse.kafka_admin.create_topics` is
+importable on the same node (or from a Jupyter `%%bash`/Python cell on JupyterHub) without needing
+`kafka-topics.sh` or the IAM-auth jar at all:
+
+```python
+from retail_lakehouse.kafka_admin import create_topics
+
+create_topics("<bootstrap-brokers>")   # defaults to retail-clickstream, 6 partitions, RF 3 -- idempotent
+```
+
+Pick whichever fits the moment — the CLI for ad-hoc inspection (`--describe`, `--list`), the Python
+function for anything scripted (a notebook cell, a future Airflow task, etc.).
+
+**Caveat, for either option above:** bootstrap actions only run at cluster *creation*, not retroactively.
+A learning cluster that already existed before these bootstrap changes were added won't have
+`kafka-topics.sh`, the IAM-auth jar, or the wheel's `[kafka]` extra until you
+`terraform taint aws_emr_cluster.learning && terraform apply` (or otherwise recreate it) to pick them up.
+Until then, fall back to installing the CLI manually inside the SSM session:
 
 ```bash
 cd /tmp
 wget https://archive.apache.org/dist/kafka/3.5.1/kafka_2.13-3.5.1.tgz   # matches var.msk_kafka_version
 tar -xzf kafka_2.13-3.5.1.tgz
-export PATH="$PATH:/tmp/kafka_2.13-3.5.1/bin"
-wget -P /tmp/kafka_2.13-3.5.1/libs/ \
+sudo ln -sf /tmp/kafka_2.13-3.5.1/bin/kafka-*.sh /usr/local/bin/
+sudo curl -fsSL -o /tmp/kafka_2.13-3.5.1/libs/aws-msk-iam-auth-all.jar \
   https://github.com/aws/aws-msk-iam-auth/releases/latest/download/aws-msk-iam-auth-all.jar
-export CLASSPATH="/tmp/kafka_2.13-3.5.1/libs/aws-msk-iam-auth-all.jar"
-```
-
-Then create the topic directly (the repo/script itself isn't on this node, so inline the same logic
-`create_msk_topics.sh` runs, using the bootstrap-brokers string from the first command above):
-
-```bash
-BOOTSTRAP_BROKERS="<paste-the-bootstrap-brokers-string-here>"
 cat > /tmp/client.properties <<EOF
 security.protocol=SASL_SSL
 sasl.mechanism=AWS_MSK_IAM
 sasl.jaas.config=software.amazon.msk.auth.iam.IAMLoginModule required;
 sasl.client.callback.handler.class=software.amazon.msk.auth.iam.IAMClientCallbackHandler
 EOF
-
-kafka-topics.sh --bootstrap-server "$BOOTSTRAP_BROKERS" \
-  --command-config /tmp/client.properties \
-  --create --if-not-exists --topic retail-clickstream --partitions 6 --replication-factor 3
+# then use --command-config /tmp/client.properties instead of /opt/kafka/client.properties above
 ```
 
-No separate AWS credential setup is needed on the EMR node — the instance profile from `iam.tf` supplies
-MSK IAM auth ambiently, same as everything else on this cluster.
 
 No credential registration step is needed — EMR clusters built from this Terraform (the persistent
 learning cluster and the ephemeral production clusters MWAA creates) already have MSK access via the EC2
