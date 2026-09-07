@@ -1,8 +1,9 @@
 # Persistent EMR cluster with JupyterHub for interactive/teaching use -- see emr-notebooks/ (production
 # pipeline walkthroughs) and class-emr/ (concept notebooks). Cost note: this bills continuously while
-# running, same as MSK -- destroy or stop it when not actively in a learning session. Node size defaults
-# to m5.large (var.emr_instance_type) -- plenty for interactive/teaching notebooks; bump it in
-# terraform.tfvars only if a workload actually needs more memory/cores.
+# running, same as MSK -- destroy or stop it when not actively in a learning session. m5.large was tried
+# as a cheaper default but EMR release 7.5.0 rejects it ("Instance type not supported") -- m5.xlarge
+# (var.emr_instance_type) is the practical floor. To still cut cost, drop var.emr_instance_count to 1
+# instead of downsizing the instance type.
 #
 # JupyterHub listens on port 9443 on the master node, but no inbound security group rule opens it to the
 # internet. Reach it via SSM port forwarding instead (no bastion/key pair/open ports needed -- the
@@ -30,6 +31,12 @@ resource "aws_emr_cluster" "learning" {
   applications  = ["Spark", "JupyterHub", "Livy", "Hadoop"]
   log_uri       = "s3://${aws_s3_bucket.lakehouse.bucket}/emr-logs/learning/"
   service_role  = aws_iam_role.emr_service_role.arn
+
+  # var.subnet_ids[0] below is a plain variable reference, not a resource reference, so Terraform's graph
+  # has no implicit edge to the networking this depends on -- the bootstrap action's `aws s3 cp` needs the
+  # S3 gateway endpoint (and/or NAT Gateway) already attached to that subnet's route table, or it fails
+  # with BOOTSTRAP_FAILURE trying to reach S3 before the route exists.
+  depends_on = [aws_route_table_association.private, aws_vpc_endpoint.s3]
 
   ec2_attributes {
     subnet_id                         = var.subnet_ids[0]

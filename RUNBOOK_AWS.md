@@ -31,9 +31,13 @@ this path.
   brew tap hashicorp/tap
   brew install hashicorp/tap/terraform
   ```
-- An existing VPC with at least 2 private subnets in different AZs, each with a route to a NAT gateway
-  (or S3 gateway endpoint) for outbound internet/S3 access — required by MWAA and by the EMR bootstrap
-  action. This is the one step Terraform can't automate for you; see `infra/terraform/README.md`.
+- An existing VPC with 3 subnets: 2 that Terraform will make private (via a NAT Gateway + dedicated route
+  table in `infra/terraform/networking.tf`), plus 1 separate existing **public** subnet to host that NAT
+  Gateway — a NAT Gateway can't live inside the private subnets it serves. MWAA rejects subnets that
+  route directly to an Internet Gateway, so this is required; see `infra/terraform/README.md`. If the 2
+  subnets were originally public, also run
+  `aws ec2 modify-subnet-attribute --subnet-id <id> --no-map-public-ip-on-launch` on both — MWAA checks
+  this attribute independently of the route table, and Terraform doesn't manage it.
 - Python 3.10+ locally for packaging/tests.
 
 ## 2. Provision AWS infrastructure
@@ -41,7 +45,8 @@ this path.
 ```bash
 cd infra/terraform
 cp terraform.tfvars.example terraform.tfvars
-# edit terraform.tfvars: vpc_id, subnet_ids
+# edit terraform.tfvars: vpc_id, subnet_ids (2 subnets to make private), nat_gateway_subnet_id (1 existing
+# public subnet, distinct from subnet_ids, to host the NAT Gateway)
 
 terraform init
 terraform plan
@@ -152,6 +157,17 @@ aws s3 rm s3://$(terraform output -raw lakehouse_bucket_name) --recursive
 terraform destroy
 ```
 
+`terraform destroy` also removes the NAT Gateway, its Elastic IP, and the private route table
+`infra/terraform/networking.tf` created -- nothing NAT-related is left behind to bill after this.
+
+Verify nothing's left billing after:
+
+```bash
+aws emr list-clusters --active
+aws kafka list-clusters
+aws mwaa list-environments
+```
+
 ## Troubleshooting
 
 **Notebook cell fails with `Failed to find data source: delta`** — you skipped the `%%configure -f` cell
@@ -162,9 +178,94 @@ session.
 `s3://<bucket>/artifacts/retail_lakehouse-latest.whl`; if that key doesn't exist yet, run step 7 first,
 then recreate the cluster (the bootstrap action only runs at cluster creation).
 
+**EMR `BOOTSTRAP_FAILURE` with `ERROR: retail_lakehouse-latest.whl is not a valid wheel filename` in the
+bootstrap action's `stderr.gz`** (find it at
+`s3://<bucket>/emr-logs/learning/<cluster-id>/node/<instance-id>/bootstrap-actions/1/stderr.gz`) — this is
+a real bug, not an environment issue: `pip install` requires a wheel filename shaped like
+`name-version-pythontag-abitag-platformtag.whl` (at least 4 hyphen-separated segments) before it will even
+open the file, and the fixed `-latest` alias name used for the S3 object (`retail_lakehouse-latest.whl`,
+only 2 segments) fails that check unconditionally — it was never going to work, regardless of the wheel's
+actual contents. `infra/terraform/bootstrap/install_retail_lakehouse.sh` fixes this by giving the
+downloaded copy a PEP 427-compliant local filename (`/tmp/retail_lakehouse-0.0.0-py3-none-any.whl`) before
+installing it; the placeholder version number doesn't matter since pip reads the real name/version from
+the wheel's actual metadata, not the filename, once the filename parses.
+
+**EMR `BOOTSTRAP_FAILURE` with `ERROR: Package 'retail-lakehouse' requires a different Python: 3.9.25 not
+in '>=3.10'`** — EMR release `emr-7.5.0`'s system `python3` is 3.9.25, but `pyproject.toml` declared
+`requires-python = ">=3.10"`. pip enforces that constraint against the *installing* interpreter, not
+whatever Python built the wheel — building/testing locally or in CI on 3.10+ (see `.github/workflows/*`)
+is unaffected, since the wheel itself is a pure-Python `py3-none-any` build with no version-specific
+bytecode. The fix was lowering `requires-python` to `>=3.9` in `pyproject.toml` to match what EMR actually
+ships, after confirming nothing in `src/` uses 3.10-only syntax (`match` statements, etc.). If a future
+change genuinely needs 3.10+, the EMR release label would need to change too, not just the constraint.
+
 **MWAA DAG import error / DAG not showing up** — confirm `airflow/dags/retail_lakehouse_pipeline.py`
 actually landed in `s3://<bucket>/airflow/dags/` (step 7), and that all four required Airflow Variables
 from step 8 are set — the DAG raises at parse time if any are missing.
 
 **EMR step fails at submit time with a Maven/Ivy resolution error** — the EMR subnet has no outbound
 internet access (no NAT gateway/S3 endpoint); `--packages io.delta:...` needs to reach Maven Central.
+
+**MWAA `CreateEnvironment` fails with `ValidationException: The subnets must be private`, even though the
+subnets' route table correctly points `0.0.0.0/0` at a NAT Gateway** — MWAA also checks the EC2 subnet
+attribute `MapPublicIpOnLaunch`, independent of the route table. Subnets that started life as public
+(most default-VPC subnets do) keep this set to `true` even after you repoint their routing — Terraform's
+`aws_route_table`/`aws_route_table_association` never touches this attribute, so it has to be turned off
+separately:
+```bash
+aws ec2 modify-subnet-attribute --subnet-id <subnet-id> --no-map-public-ip-on-launch
+```
+Do this for both subnets in `var.subnet_ids`, then retry. Routing alone will look correct in
+`aws ec2 describe-route-tables` while this is still the actual blocker — don't stop checking at the route
+table.
+
+**A NAT Gateway needs its own subnet, separate from the private subnets it serves** — a NAT Gateway must
+sit in a subnet with its own direct route to an Internet Gateway, so it can't live inside the private
+subnets it's making private for MWAA (that would be circular). If you're converting existing public
+subnets into `var.subnet_ids`, you need one *additional* existing public subnet on hand purely to host the
+NAT Gateway (`var.nat_gateway_subnet_id`) — budget for 3 subnets total, not 2.
+
+**EMR `RunJobFlow` fails with `Instance type 'X' is not supported`** — not every size in an instance
+family is valid for EMR, and it depends on the release label + application set. `m5.large` was rejected
+outright for release `emr-7.5.0` running Spark+JupyterHub+Livy+Hadoop together; `m5.xlarge` was the
+smallest size that worked. Don't assume the smallest instance in a family will be accepted — if cost is
+the goal, drop `emr_instance_count` instead of downsizing below whatever instance type is proven to work.
+
+**MWAA `CreateEnvironment` fails with `... is not authorized to perform: s3:GetAccountPublicAccessBlock`
+or `s3:GetBucketPublicAccessBlock`** — these are pre-flight checks MWAA's own validation runs against your
+execution role before it will create the environment; they aren't part of a typical hand-written S3 access
+policy. Add both to the execution role's policy: the account-level action needs `Resource = "*"` (no
+bucket ARN applies to an account-level check), the bucket-level one needs the bucket's ARN. See
+`aws_iam_role_policy.mwaa_execution_policy` in `infra/terraform/mwaa.tf` for the exact statements.
+
+**Terraform creates/updates resources in the "wrong" order even though the config looks fine** — Terraform
+only infers ordering from resource-*attribute* references (`aws_x.y.arn`, `.id`, etc). If two resources
+are tied together only by both reading the same input *variable* (e.g. `aws_mwaa_environment.this` and
+`aws_route_table_association.private` both use `var.subnet_ids`, but neither references the other's
+attributes), Terraform sees no dependency between them and may create them in parallel — which is exactly
+how MWAA validation raced ahead of a NAT Gateway/route table that hadn't finished being created yet in an
+earlier version of this config. The fix is an explicit `depends_on` (see `mwaa.tf` and `emr_learning.tf`)
+wherever a resource's *real* correctness depends on another resource that config structure alone doesn't
+expose.
+
+**`terraform apply -target=X` doesn't pick up a change you just made** — `-target` only pulls in resources
+`X` depends on *by attribute reference*. `aws_mwaa_environment.this` references
+`aws_iam_role.mwaa_execution.arn` (the role), not `aws_iam_role_policy.mwaa_execution_policy` (the inline
+policy attached to that role) — so `-target=aws_mwaa_environment.this` alone will retry environment
+creation using whatever policy is *already live in AWS*, silently ignoring a policy edit still sitting
+only in your local config. Target both explicitly
+(`-target=aws_iam_role_policy.mwaa_execution_policy -target=aws_mwaa_environment.this`), or just run a
+plain `terraform apply` once you're done narrowing down a specific failure — `-target` is for isolating
+one error at a time, not a substitute for a normal apply.
+
+**`terraform apply` seems stuck on the MWAA environment for 30+ minutes** — this isn't necessarily stuck;
+AWS documents MWAA environment creation as commonly taking 20-40 minutes. Don't just wait on a blocked
+terminal — open a second one and check real status directly:
+```bash
+aws mwaa get-environment --name <project_name>-<environment> \
+  --query 'Environment.{Status:Status,LastUpdate:LastUpdate}' --output json
+```
+`CREATING` means it's genuinely still working. `CREATE_FAILED` shows the real error immediately in
+`LastUpdate.Error.ErrorMessage` — you can `Ctrl+C` the stuck `terraform apply` and act on it right away
+instead of waiting for Terraform's own polling to notice and time out.
+

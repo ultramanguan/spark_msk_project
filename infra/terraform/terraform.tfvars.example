@@ -4,5 +4,9 @@ environment = "dev"
 
 # Fill these in for your account -- see README.md in this directory.
 # 2 is the minimum MSK Serverless and MWAA both require (different AZs) -- adding a 3rd buys nothing here.
-vpc_id     = "vpc-0130c2bdc7bc7bce0"
-subnet_ids = ["subnet-0da3f262d8a21bf64", "subnet-0c8c5dc821ccc1144"]
+vpc_id     = "vpc-084e8fc1bb45473da"
+subnet_ids = ["subnet-000346bb66cfe1042", "subnet-078bb93daeae524ad"]
+
+# An existing PUBLIC subnet, distinct from subnet_ids above, used only to host the NAT Gateway that
+# networking.tf creates to make subnet_ids private (required by MWAA -- it rejects public subnets outright).
+nat_gateway_subnet_id = "subnet-05a05fb168dcc399f"

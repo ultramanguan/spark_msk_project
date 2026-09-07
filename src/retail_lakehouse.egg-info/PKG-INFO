@@ -3,7 +3,7 @@ Name: retail-lakehouse
 Version: 0.1.0
 Summary: Production AWS lakehouse pipeline: S3 + MSK Kafka + EMR/MWAA + Delta Lake with Spark Structured Streaming.
 Author: Data Engineering Team
-Requires-Python: >=3.10
+Requires-Python: >=3.9
 Requires-Dist: pydantic>=2.0
 Provides-Extra: dev
 Requires-Dist: pytest>=8.0; extra == "dev"

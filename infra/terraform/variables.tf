@@ -22,8 +22,13 @@ variable "vpc_id" {
 }
 
 variable "subnet_ids" {
-  description = "At least 2 private subnet IDs in different AZs within var.vpc_id for MSK brokers."
+  description = "Exactly 2 subnet IDs in different AZs within var.vpc_id, used by MSK, EMR, and MWAA. networking.tf gives these their own route table pointed at the NAT Gateway in var.nat_gateway_subnet_id, converting them to private -- required by MWAA regardless of whatever route table they use today."
   type        = list(string)
+}
+
+variable "nat_gateway_subnet_id" {
+  description = "An existing PUBLIC subnet (route to an Internet Gateway) in var.vpc_id, distinct from var.subnet_ids, to host the shared NAT Gateway that makes var.subnet_ids private. A NAT Gateway must live in a public subnet -- it can't host itself in the private subnets it serves."
+  type        = string
 }
 
 variable "kafka_topics" {
@@ -51,9 +56,9 @@ variable "emr_release_label" {
 }
 
 variable "emr_instance_type" {
-  description = "EC2 instance type for EMR master/core nodes. Keep small for training/demo use."
+  description = "EC2 instance type for EMR master/core nodes. m5.large is rejected by EMR release 7.5.0 (\"Instance type not supported\") -- m5.xlarge is the practical floor for this release/application combo. Keep small for training/demo use."
   type        = string
-  default     = "m5.large"
+  default     = "m5.xlarge"
 }
 
 variable "emr_instance_count" {

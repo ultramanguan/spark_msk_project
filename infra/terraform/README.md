@@ -29,21 +29,28 @@ session.** Don't leave any of this running.
    brew tap hashicorp/tap
    brew install hashicorp/tap/terraform
    ```
-3. An existing VPC with exactly 2 private subnets in different AZs (that's the minimum both MSK Serverless
-   and MWAA require — a 3rd buys nothing), each with a route to outbound internet for MWAA and the EMR
-   bootstrap action (which downloads the `retail_lakehouse` wheel from S3 on cluster startup). For a
-   training/demo account, route both subnets to a single shared NAT Gateway rather than one per AZ — this
-   workload doesn't need per-AZ NAT redundancy, and it roughly halves the NAT Gateway hourly cost.
-   `networking.tf` adds a free S3 gateway endpoint on top of that, so the S3 traffic this project generates
-   (Delta tables, checkpoints, the bootstrap wheel, DAG sync) doesn't hit the NAT Gateway's per-GB charge
-   at all.
+3. An existing VPC with 3 subnets: 2 that will become private (any AZ pairing works — `networking.tf`
+   moves them onto a dedicated route table through a shared NAT Gateway, which is what both MSK Serverless
+   and MWAA require), plus 1 separate **public** subnet (route to an Internet Gateway) to host that NAT
+   Gateway — a NAT Gateway can't sit inside the private subnets it serves. `networking.tf` also adds a
+   free S3 gateway endpoint, so the S3 traffic this project generates (Delta tables, checkpoints, the
+   bootstrap wheel, DAG sync) doesn't hit the NAT Gateway's per-GB charge at all.
+
+   If the 2 subnets you're repurposing were originally public, also disable their
+   "auto-assign public IPv4" attribute — MWAA checks this independently of the route table and will
+   reject them with `The subnets must be private` even after `networking.tf` fixes their routing:
+   ```bash
+   aws ec2 modify-subnet-attribute --subnet-id <subnet-id> --no-map-public-ip-on-launch
+   ```
+   (repeat for both). Terraform doesn't manage this attribute, so it has to be done by hand.
 
 ## Usage
 
 ```bash
 cd infra/terraform
 cp terraform.tfvars.example terraform.tfvars
-# edit terraform.tfvars: vpc_id, subnet_ids
+# edit terraform.tfvars: vpc_id, subnet_ids (2 subnets to make private), nat_gateway_subnet_id (1 existing
+# public subnet, distinct from subnet_ids, to host the NAT Gateway)
 
 terraform init
 terraform plan
@@ -61,8 +68,11 @@ profile in `iam.tf`, attached automatically to any cluster built from this Terra
 - `versions.tf` — Terraform/provider version pins.
 - `variables.tf` — all inputs; see `terraform.tfvars.example` for a starting point.
 - `s3.tf` — the lakehouse bucket, versioning, encryption, public access block, checkpoint lifecycle rule.
-- `networking.tf` — a free S3 gateway VPC endpoint attached to every route table in `var.vpc_id`, so S3
-  traffic doesn't route through (and get billed by) the NAT Gateway.
+- `networking.tf` — makes `var.subnet_ids` private: a shared NAT Gateway (hosted in `var.nat_gateway_subnet_id`,
+  which must stay public), an Elastic IP for it, and a dedicated route table pointing `var.subnet_ids` at
+  it — required because MWAA rejects subnets that route directly to an Internet Gateway. Also adds a free
+  S3 gateway VPC endpoint attached to every route table in `var.vpc_id`, so S3 traffic doesn't route
+  through (and get billed by) the NAT Gateway.
 - `msk.tf` — MSK Serverless cluster + its security group. Ingress is allowed from a Terraform-managed
   `emr_msk_client` marker security group, which any EMR cluster (persistent or ephemeral) attaches to get
   MSK access — see the comment on that resource for why.
@@ -93,3 +103,18 @@ it first if you want a full teardown:
 aws s3 rm s3://$(terraform output -raw lakehouse_bucket_name) --recursive
 terraform destroy
 ```
+
+This tears down everything this Terraform manages -- the MSK Serverless cluster, the persistent EMR
+learning cluster, the MWAA environment, the S3 bucket, the NAT Gateway + Elastic IP + private route table,
+the S3 gateway endpoint, and all IAM roles/security groups. `var.subnet_ids` revert to whatever route
+table they'd use by default once their explicit association here is removed; `var.nat_gateway_subnet_id`
+was never modified, since it was already public.
+
+Verify nothing's left billing after:
+
+```bash
+aws emr list-clusters --active
+aws kafka list-clusters
+aws mwaa list-environments
+```
+

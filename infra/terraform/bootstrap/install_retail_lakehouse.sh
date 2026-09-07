@@ -5,7 +5,10 @@
 set -euo pipefail
 
 WHEEL_S3_URI="${1:?Usage: install_retail_lakehouse.sh <s3://bucket/artifacts/retail_lakehouse-latest.whl>}"
-LOCAL_WHEEL="/tmp/retail_lakehouse-latest.whl"
+# pip requires a PEP 427-shaped filename (name-version-pythontag-abitag-platformtag.whl) to even parse the
+# file -- the "-latest" alias name in S3 (2 segments) fails that check before pip ever reads the wheel's
+# real metadata, so the local copy needs a compliant name regardless of what the S3 object is called.
+LOCAL_WHEEL="/tmp/retail_lakehouse-0.0.0-py3-none-any.whl"
 
 aws s3 cp "$WHEEL_S3_URI" "$LOCAL_WHEEL"
 sudo pip3 install --upgrade "$LOCAL_WHEEL"

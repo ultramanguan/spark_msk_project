@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "retail-lakehouse"
 version = "0.1.0"
 description = "Production AWS lakehouse pipeline: S3 + MSK Kafka + EMR/MWAA + Delta Lake with Spark Structured Streaming."
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 authors = [{name = "Data Engineering Team"}]
 dependencies = [
   "pydantic>=2.0",

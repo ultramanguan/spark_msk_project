@@ -44,12 +44,23 @@ resource "aws_iam_role_policy" "mwaa_execution_policy" {
     Version = "2012-10-17"
     Statement = [
       {
+        # Required by MWAA's own CreateEnvironment validation (calls s3:GetAccountPublicAccessBlock via
+        # S3 Control internally, using this execution role) -- account-level, so no bucket ARN applies.
+        Sid      = "S3AccountPublicAccessBlock"
+        Effect   = "Allow"
+        Action   = "s3:GetAccountPublicAccessBlock"
+        Resource = "*"
+      },
+      {
+        # GetBucketPublicAccessBlock is also part of MWAA's CreateEnvironment validation, run against the
+        # specific source bucket -- separate from the account-level check above.
         Sid    = "S3DagsAndData"
         Effect = "Allow"
         Action = [
           "s3:GetObject",
           "s3:PutObject",
           "s3:ListBucket",
+          "s3:GetBucketPublicAccessBlock",
         ]
         Resource = [
           aws_s3_bucket.lakehouse.arn,
@@ -178,8 +189,12 @@ resource "aws_mwaa_environment" "this" {
 
   # MWAA's CreateEnvironment API rejects a source bucket without versioning enabled; without this explicit
   # dependency, Terraform's graph has no ordering guarantee between the two, which can cause an
-  # intermittent apply failure on a clean account.
-  depends_on = [aws_s3_bucket_versioning.lakehouse]
+  # intermittent apply failure on a clean account. Also depends on aws_route_table_association.private:
+  # var.subnet_ids only becomes a plain variable reference here, not a resource reference, so Terraform's
+  # graph has no *implicit* edge to the route table association that actually makes those subnets private
+  # -- without this, MWAA can validate the subnets before networking.tf has finished repointing them off
+  # the Internet Gateway, and reject them as still public.
+  depends_on = [aws_s3_bucket_versioning.lakehouse, aws_route_table_association.private]
 
   network_configuration {
     subnet_ids         = var.subnet_ids
