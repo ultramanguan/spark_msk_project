@@ -99,16 +99,25 @@ resource "aws_emr_cluster" "learning" {
   }
 
   # A bootstrap_action can't do this: bootstrap actions run before EMR installs the requested
-  # applications, so the `jovyan` user and JupyterHub's home directory don't exist yet at that point. A
-  # `step` runs only after the cluster (and its applications) are fully up, which is what this needs.
-  # `eval echo ~jovyan` resolves jovyan's actual home directory at run time rather than assuming a path,
-  # since that's not documented as a stable AWS contract. Steps run as the `hadoop` user (same as
-  # bootstrap actions above), so `sudo` is required -- without it, writing into jovyan's home directory
-  # and the final chown would both fail on a permission error. action_on_failure = CONTINUE so a failure
-  # here (e.g. AWS changes that user/home setup) is a missing convenience, not a cluster-breaking one --
-  # RUNBOOK_AWS.md step 6's manual `aws s3 sync` is the fallback either way, and is also what you re-run
-  # after editing a notebook locally, since a step only runs once at cluster creation and won't pick up
-  # later changes on its own.
+  # applications, so JupyterHub (and the container below) don't exist yet at that point. A `step` runs
+  # only after the cluster (and its applications) are fully up, which is what this needs.
+  #
+  # JupyterHub on EMR (release 7.x) runs inside a Docker container (image emr/jupyter-notebook:*), not
+  # directly on the host -- confirmed via `docker inspect jupyterhub --format '{{json .Mounts}}'`, which
+  # shows the host's /var/lib/jupyter/home bind-mounted to /home inside the container. So `jovyan`'s home
+  # directory is concretely /var/lib/jupyter/home/jovyan on the host -- there's no `jovyan` user on the
+  # host itself (an earlier version of this step assumed `eval echo ~jovyan` would resolve it, which
+  # silently expanded to nothing since that user doesn't exist outside the container, and syncing there
+  # produced a step that "succeeded" without ever reaching JupyterHub's actual filesystem). UID/GID for
+  # the final chown are looked up *inside* the container for the same reason -- `jovyan` only resolves to
+  # a name in that container's /etc/passwd, not the host's.
+  #
+  # Steps run as the `hadoop` user (same as bootstrap actions above), so `sudo` is required for both the
+  # host-side file writes and to invoke `docker exec`. action_on_failure = CONTINUE so a failure here
+  # (e.g. AWS changes this container/mount layout in a future EMR release) is a missing convenience, not
+  # a cluster-breaking one -- RUNBOOK_AWS.md step 6's manual `aws s3 sync` is the fallback either way, and
+  # is also what you re-run after editing a notebook locally, since a step only runs once at cluster
+  # creation and won't pick up later changes on its own.
   step {
     name              = "sync-notebooks-to-jupyterhub"
     action_on_failure = "CONTINUE"
@@ -117,7 +126,7 @@ resource "aws_emr_cluster" "learning" {
       jar = "command-runner.jar"
       args = [
         "sudo", "bash", "-c",
-        "JOVYAN_HOME=$(eval echo ~jovyan) && aws s3 sync s3://${aws_s3_bucket.lakehouse.bucket}/notebooks/emr-notebooks/ \"$JOVYAN_HOME/emr-notebooks/\" && aws s3 sync s3://${aws_s3_bucket.lakehouse.bucket}/notebooks/class-emr/ \"$JOVYAN_HOME/class-emr/\" && chown -R jovyan:jovyan \"$JOVYAN_HOME/emr-notebooks\" \"$JOVYAN_HOME/class-emr\""
+        "DEST=/var/lib/jupyter/home/jovyan && mkdir -p \"$DEST/emr-notebooks\" \"$DEST/class-emr\" && aws s3 sync s3://${aws_s3_bucket.lakehouse.bucket}/notebooks/emr-notebooks/ \"$DEST/emr-notebooks/\" && aws s3 sync s3://${aws_s3_bucket.lakehouse.bucket}/notebooks/class-emr/ \"$DEST/class-emr/\" && JOVYAN_UID=$(docker exec jupyterhub id -u jovyan) && JOVYAN_GID=$(docker exec jupyterhub id -g jovyan) && chown -R \"$JOVYAN_UID:$JOVYAN_GID\" \"$DEST/emr-notebooks\" \"$DEST/class-emr\""
       ]
     }
   }
