@@ -116,6 +116,28 @@ Use the `PySpark` kernel for every notebook below.
 
 ## 6. Run the notebooks
 
+**Get the notebooks onto the cluster first.** JupyterHub's workspace on a fresh cluster is empty — only
+its own internal state (`jupyterhub.sqlite`, `jupyterhub-proxy.pid`, `jupyterhub_cookie_secret`) lives
+there by default. Nothing in this Terraform or CI syncs `emr-notebooks/`/`class-emr/` there automatically
+— unlike `emr_jobs/`/`airflow/dags/`, which `deploy_aws.yml` pushes to S3 for the automated pipeline,
+these are meant for interactive human editing, so getting them onto the node is a manual step.
+
+From your laptop, push them to S3:
+```bash
+BUCKET=$(terraform -chdir=infra/terraform output -raw lakehouse_bucket_name)
+aws s3 sync emr-notebooks/ "s3://$BUCKET/notebooks/emr-notebooks/"
+aws s3 sync class-emr/ "s3://$BUCKET/notebooks/class-emr/"
+```
+
+Then, from a **terminal inside JupyterHub** (File → New → Terminal — not your laptop's terminal), pull
+them onto the node:
+```bash
+aws s3 sync s3://<bucket>/notebooks/emr-notebooks/ ~/emr-notebooks/
+aws s3 sync s3://<bucket>/notebooks/class-emr/ ~/class-emr/
+```
+The instance profile from `iam.tf` already grants S3 access, so no credentials to configure there either.
+Re-run this `sync` any time you edit a notebook locally and want the update reflected on the cluster.
+
 In each notebook's first real code cell, set `base_path` to `s3://<bucket>/data` (from
 `terraform output lakehouse_bucket_name`) — every notebook has a `s3://<your-lakehouse-bucket>/...`
 placeholder that needs replacing.
