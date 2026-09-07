@@ -18,9 +18,20 @@ session.** Don't leave any of this running.
 ## Prerequisites
 
 1. An AWS account and credentials configured for Terraform (`aws configure` or equivalent env vars).
-2. An existing VPC with at least 2 private subnets in different AZs, each with a route to a NAT gateway
-   (or S3 gateway endpoint) for outbound internet/S3 access — required by MWAA and by the EMR bootstrap
-   action, which downloads the `retail_lakehouse` wheel from S3 on cluster startup.
+2. Terraform CLI installed. It's no longer in homebrew-core (HashiCorp pulled it after their license
+   change), so install it from HashiCorp's own tap:
+   ```bash
+   brew tap hashicorp/tap
+   brew install hashicorp/tap/terraform
+   ```
+3. An existing VPC with exactly 2 private subnets in different AZs (that's the minimum both MSK Serverless
+   and MWAA require — a 3rd buys nothing), each with a route to outbound internet for MWAA and the EMR
+   bootstrap action (which downloads the `retail_lakehouse` wheel from S3 on cluster startup). For a
+   training/demo account, route both subnets to a single shared NAT Gateway rather than one per AZ — this
+   workload doesn't need per-AZ NAT redundancy, and it roughly halves the NAT Gateway hourly cost.
+   `networking.tf` adds a free S3 gateway endpoint on top of that, so the S3 traffic this project generates
+   (Delta tables, checkpoints, the bootstrap wheel, DAG sync) doesn't hit the NAT Gateway's per-GB charge
+   at all.
 
 ## Usage
 
@@ -45,6 +56,8 @@ profile in `iam.tf`, attached automatically to any cluster built from this Terra
 - `versions.tf` — Terraform/provider version pins.
 - `variables.tf` — all inputs; see `terraform.tfvars.example` for a starting point.
 - `s3.tf` — the lakehouse bucket, versioning, encryption, public access block, checkpoint lifecycle rule.
+- `networking.tf` — a free S3 gateway VPC endpoint attached to every route table in `var.vpc_id`, so S3
+  traffic doesn't route through (and get billed by) the NAT Gateway.
 - `msk.tf` — MSK Serverless cluster + its security group. Ingress is allowed from a Terraform-managed
   `emr_msk_client` marker security group, which any EMR cluster (persistent or ephemeral) attaches to get
   MSK access — see the comment on that resource for why.

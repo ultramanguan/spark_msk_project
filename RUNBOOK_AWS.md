@@ -20,7 +20,13 @@ this path.
 
 - An AWS account with permission to create S3 buckets, an MSK Serverless cluster, EMR clusters, an MWAA
   environment, and IAM roles.
-- AWS credentials configured locally (`aws configure` or equivalent env vars) and Terraform installed.
+- AWS credentials configured locally (`aws configure` or equivalent env vars).
+- Terraform CLI installed. It's no longer in homebrew-core (HashiCorp pulled it after their license
+  change), so install it from HashiCorp's own tap:
+  ```bash
+  brew tap hashicorp/tap
+  brew install hashicorp/tap/terraform
+  ```
 - An existing VPC with at least 2 private subnets in different AZs, each with a route to a NAT gateway
   (or S3 gateway endpoint) for outbound internet/S3 access — required by MWAA and by the EMR bootstrap
   action. This is the one step Terraform can't automate for you; see `infra/terraform/README.md`.

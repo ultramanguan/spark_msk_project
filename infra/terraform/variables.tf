@@ -53,7 +53,7 @@ variable "emr_release_label" {
 variable "emr_instance_type" {
   description = "EC2 instance type for EMR master/core nodes. Keep small for training/demo use."
   type        = string
-  default     = "m5.xlarge"
+  default     = "m5.large"
 }
 
 variable "emr_instance_count" {

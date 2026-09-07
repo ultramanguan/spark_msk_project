@@ -12,6 +12,7 @@ src/retail_lakehouse.egg-info/SOURCES.txt
 src/retail_lakehouse.egg-info/dependency_links.txt
 src/retail_lakehouse.egg-info/requires.txt
 src/retail_lakehouse.egg-info/top_level.txt
+tests/test_config.py
 tests/test_kafka_parsing.py
 tests/test_streaming.py
 tests/test_transformations.py

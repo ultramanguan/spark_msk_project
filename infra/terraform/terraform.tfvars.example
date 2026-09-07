@@ -3,5 +3,6 @@ project_name = "retail-lakehouse"
 environment = "dev"
 
 # Fill these in for your account -- see README.md in this directory.
-vpc_id     = "vpc-REPLACE_ME"
-subnet_ids = ["subnet-REPLACE_ME_1", "subnet-REPLACE_ME_2"]
+# 2 is the minimum MSK Serverless and MWAA both require (different AZs) -- adding a 3rd buys nothing here.
+vpc_id     = "vpc-0130c2bdc7bc7bce0"
+subnet_ids = ["subnet-0da3f262d8a21bf64", "subnet-0c8c5dc821ccc1144"]

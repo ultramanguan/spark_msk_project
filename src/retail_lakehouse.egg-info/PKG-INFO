@@ -1,7 +1,7 @@
 Metadata-Version: 2.4
 Name: retail-lakehouse
 Version: 0.1.0
-Summary: Production AWS Databricks lakehouse pipeline: S3 + MSK Kafka + Delta Lake with Spark Structured Streaming.
+Summary: Production AWS lakehouse pipeline: S3 + MSK Kafka + EMR/MWAA + Delta Lake with Spark Structured Streaming.
 Author: Data Engineering Team
 Requires-Python: >=3.10
 Requires-Dist: pydantic>=2.0

@@ -1,6 +1,8 @@
 # Persistent EMR cluster with JupyterHub for interactive/teaching use -- see emr-notebooks/ (production
 # pipeline walkthroughs) and class-emr/ (concept notebooks). Cost note: this bills continuously while
-# running, same as MSK -- destroy or stop it when not actively in a learning session.
+# running, same as MSK -- destroy or stop it when not actively in a learning session. Node size defaults
+# to m5.large (var.emr_instance_type) -- plenty for interactive/teaching notebooks; bump it in
+# terraform.tfvars only if a workload actually needs more memory/cores.
 #
 # JupyterHub listens on port 9443 on the master node, but no inbound security group rule opens it to the
 # internet. Reach it via SSM port forwarding instead (no bastion/key pair/open ports needed -- the
