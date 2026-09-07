@@ -75,7 +75,11 @@ output "msk_cluster_arn" {
 
 output "msk_bootstrap_brokers_command" {
   description = "Run this after apply to fetch the bootstrap broker string used by the Spark kafka.bootstrap.servers option"
-  value       = "aws kafka get-bootstrap-brokers --cluster-arn ${aws_msk_serverless_cluster.this.arn} --region ${var.aws_region} --query bootstrapBrokerStringSaslIam --output text"
+  # JMESPath queries are case-sensitive -- the API field is "BootstrapBrokerStringSaslIam" (capital B),
+  # not "bootstrapBrokerStringSaslIam". The lowercase version silently returns null/"None" instead of
+  # erroring, regardless of whether the cluster is active yet, which makes this easy to misdiagnose as a
+  # cluster-not-ready issue.
+  value = "aws kafka get-bootstrap-brokers --cluster-arn ${aws_msk_serverless_cluster.this.arn} --region ${var.aws_region} --query BootstrapBrokerStringSaslIam --output text"
 }
 
 output "emr_msk_client_security_group_id" {

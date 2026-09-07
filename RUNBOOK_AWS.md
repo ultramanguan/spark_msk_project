@@ -63,8 +63,63 @@ step 9 below for teardown.
 
 ```bash
 terraform output -raw msk_bootstrap_brokers_command | bash   # prints the bootstrap broker string
+```
+
+This first command is a plain AWS API call (`aws kafka get-bootstrap-brokers`) — run it from your laptop,
+no VPC access needed.
+
+```bash
 ../../scripts/create_msk_topics.sh <bootstrap-brokers>        # creates retail-clickstream, 6 partitions, RF 3
 ```
+
+This second command is different: it opens a real TCP connection to the broker on port 9098, which is
+**only reachable from inside the VPC** (MSK Serverless has no public endpoint). Running it straight from
+your laptop fails, first with `kafka-topics.sh: command not found` if the Kafka CLI isn't installed
+locally, and then with a connection timeout even if it is (unless your laptop is VPN'd/peered into the
+VPC). The reliable option is running it from the EMR learning cluster instead, which already has network
++ IAM access to MSK:
+
+```bash
+# find the EMR master instance
+aws emr list-instances --cluster-id $(terraform output -raw emr_learning_cluster_id) \
+  --instance-group-types MASTER --query 'Instances[0].Ec2InstanceId' --output text
+
+# SSM into it -- no bastion/key pair needed, same pattern as JupyterHub access in emr_learning.tf
+aws ssm start-session --target <instance-id>
+```
+
+The EMR node doesn't ship the Kafka CLI by default either (`applications` in `emr_learning.tf` is
+Spark/JupyterHub/Livy/Hadoop, not Kafka), so fetch it once inside that SSM session:
+
+```bash
+cd /tmp
+wget https://archive.apache.org/dist/kafka/3.5.1/kafka_2.13-3.5.1.tgz   # matches var.msk_kafka_version
+tar -xzf kafka_2.13-3.5.1.tgz
+export PATH="$PATH:/tmp/kafka_2.13-3.5.1/bin"
+wget -P /tmp/kafka_2.13-3.5.1/libs/ \
+  https://github.com/aws/aws-msk-iam-auth/releases/latest/download/aws-msk-iam-auth-all.jar
+export CLASSPATH="/tmp/kafka_2.13-3.5.1/libs/aws-msk-iam-auth-all.jar"
+```
+
+Then create the topic directly (the repo/script itself isn't on this node, so inline the same logic
+`create_msk_topics.sh` runs, using the bootstrap-brokers string from the first command above):
+
+```bash
+BOOTSTRAP_BROKERS="<paste-the-bootstrap-brokers-string-here>"
+cat > /tmp/client.properties <<EOF
+security.protocol=SASL_SSL
+sasl.mechanism=AWS_MSK_IAM
+sasl.jaas.config=software.amazon.msk.auth.iam.IAMLoginModule required;
+sasl.client.callback.handler.class=software.amazon.msk.auth.iam.IAMClientCallbackHandler
+EOF
+
+kafka-topics.sh --bootstrap-server "$BOOTSTRAP_BROKERS" \
+  --command-config /tmp/client.properties \
+  --create --if-not-exists --topic retail-clickstream --partitions 6 --replication-factor 3
+```
+
+No separate AWS credential setup is needed on the EMR node — the instance profile from `iam.tf` supplies
+MSK IAM auth ambiently, same as everything else on this cluster.
 
 No credential registration step is needed — EMR clusters built from this Terraform (the persistent
 learning cluster and the ephemeral production clusters MWAA creates) already have MSK access via the EC2
@@ -198,6 +253,17 @@ is unaffected, since the wheel itself is a pure-Python `py3-none-any` build with
 bytecode. The fix was lowering `requires-python` to `>=3.9` in `pyproject.toml` to match what EMR actually
 ships, after confirming nothing in `src/` uses 3.10-only syntax (`match` statements, etc.). If a future
 change genuinely needs 3.10+, the EMR release label would need to change too, not just the constraint.
+
+**Step 3's bootstrap-brokers command prints `None` instead of a broker string** — two different possible
+causes, check in this order: (1) the MSK Serverless cluster may not be `ACTIVE` yet
+(`aws kafka list-clusters-v2 --query 'ClusterInfoList[].State'`) — bootstrap brokers aren't populated
+before that. (2) Even once active, `--query bootstrapBrokerStringSaslIam` (lowercase `b`) silently returns
+null forever, because JMESPath queries are case-sensitive and the real API field is
+`BootstrapBrokerStringSaslIam` (capital `B`) — confirm the exact casing by running
+`aws kafka get-bootstrap-brokers --cluster-arn <arn>` with no `--query` at all and reading the raw JSON.
+This lowercase/uppercase mismatch was an actual bug in `msk_bootstrap_brokers_command`'s output definition
+in `infra/terraform/msk.tf`, not a transient cluster-readiness issue — it would have returned `None`
+forever, even once the cluster was active, until the casing was fixed.
 
 **MWAA DAG import error / DAG not showing up** — confirm `airflow/dags/retail_lakehouse_pipeline.py`
 actually landed in `s3://<bucket>/airflow/dags/` (step 7), and that all four required Airflow Variables
