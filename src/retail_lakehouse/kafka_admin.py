@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from kafka import KafkaAdminClient
 from kafka.admin import NewTopic
 from kafka.errors import TopicAlreadyExistsError
+from kafka.net.sasl.oauth import AbstractTokenProvider
 
 
 @dataclass(frozen=True)
@@ -14,11 +15,16 @@ class TopicSpec:
     replication_factor: int = 3
 
 
-class _MSKTokenProvider:
+class _MSKTokenProvider(AbstractTokenProvider):
     """Bridges kafka-python's OAUTHBEARER mechanism to MSK IAM auth. MSK IAM isn't a kafka-python-native
     SASL mechanism, so token generation is delegated to aws-msk-iam-sasl-signer-python (AWS's own signer)
     on every refresh -- this is the same approach the EC2 instance profile supplies ambiently everywhere
-    else on this cluster, just wired through kafka-python's token-provider interface."""
+    else on this cluster, just wired through kafka-python's token-provider interface.
+
+    Must subclass AbstractTokenProvider, not just duck-type a .token() method -- kafka-python's SASL
+    OAUTHBEARER handler does `isinstance(provider, AbstractTokenProvider)` before using it
+    (kafka/net/sasl/oauth.py), and that check failing surfaces as a generic KafkaTimeoutError deep in the
+    async bootstrap retry loop rather than a clear configuration error at client construction time."""
 
     def __init__(self, region: str) -> None:
         self._region = region

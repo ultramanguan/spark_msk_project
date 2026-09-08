@@ -143,6 +143,30 @@ resource "aws_emr_cluster" "learning" {
       Properties = {
         "hive.metastore.client.factory.class" = "com.amazonaws.glue.catalog.metastore.AWSGlueDataCatalogHiveClientFactory"
       }
+    },
+    {
+      # Client-side: raises sparkmagic's session-creation wait past the default 60s. Needed because
+      # emr-notebooks/02_kafka_msk_streaming_ingest.ipynb's %%configure pulls in aws-msk-iam-auth, which
+      # transitively drags in the entire AWS SDK v2 (~90 jars) -- staging that to HDFS alone measured
+      # ~39s in this cluster's Livy logs, on top of AM container allocation, comfortably blowing past 60s
+      # even though the session eventually succeeds. EMR writes this classification's properties directly
+      # into /etc/jupyter/conf/config.json, which is where sparkmagic's own source
+      # (sparkmagic/utils/configuration.py's livy_session_startup_timeout_seconds()) reads its override
+      # from -- confirmed by reading that file inside the running jupyterhub container.
+      Classification = "jupyter-sparkmagic-conf"
+      Properties = {
+        "livy_session_startup_timeout_seconds" = "600"
+      }
+    },
+    {
+      # Server-side counterpart: livy.rsc.server.connect.timeout governs how long Livy waits for the
+      # driver to register back after YARN allocates it, a separate clock from the client-side wait above.
+      Classification = "livy-conf"
+      Properties = {
+        "livy.server.session.timeout-check" = "true"
+        "livy.server.session.timeout"       = "2h"
+        "livy.rsc.server.connect.timeout"   = "120s"
+      }
     }
   ])
 

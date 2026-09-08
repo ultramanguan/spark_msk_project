@@ -68,9 +68,10 @@ resource "aws_iam_role_policy_attachment" "emr_ssm_managed" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
-# Scope note: this example scopes cluster-level actions to the specific MSK cluster ARN, and topic-level
-# actions to the "retail-clickstream*" topic name pattern. Tighten `Resource` further per your org's IAM
-# standards before using outside training/demo purposes.
+# Scope note: this scopes cluster-level actions to the specific MSK cluster ARN, and topic/group-level
+# actions to all topics/groups on that cluster (trailing /* -- see the load-bearing-suffix note below).
+# Narrow the topic Resource to a specific name/prefix pattern per your org's IAM standards before using
+# outside training/demo purposes.
 resource "aws_iam_role_policy" "emr_msk_access" {
   name = "${var.project_name}-${var.environment}-emr-msk-access"
   role = aws_iam_role.emr_instance_profile_role.id
@@ -97,7 +98,12 @@ resource "aws_iam_role_policy" "emr_msk_access" {
           "kafka-cluster:WriteData",
           "kafka-cluster:DescribeTopicDynamicConfiguration",
         ]
-        Resource = replace(aws_msk_serverless_cluster.this.arn, ":cluster/", ":topic/") # broadened at apply time; see note below
+        # Trailing /* is required, not optional: MSK topic ARNs are
+        # arn:aws:kafka:REGION:ACCOUNT:topic/CLUSTER_NAME/CLUSTER_UUID/TOPIC_NAME. Without a topic-name
+        # segment (or this wildcard), the Resource string above never matches any real topic ARN during
+        # policy evaluation, so every topic-level action -- including CreateTopics -- gets denied
+        # (TopicAuthorizationFailedError, error code 29) regardless of what's in Action.
+        Resource = "${replace(aws_msk_serverless_cluster.this.arn, ":cluster/", ":topic/")}/*"
       },
       {
         Sid    = "ConsumerGroup"
@@ -106,17 +112,18 @@ resource "aws_iam_role_policy" "emr_msk_access" {
           "kafka-cluster:AlterGroup",
           "kafka-cluster:DescribeGroup",
         ]
-        Resource = replace(aws_msk_serverless_cluster.this.arn, ":cluster/", ":group/")
+        Resource = "${replace(aws_msk_serverless_cluster.this.arn, ":cluster/", ":group/")}/*"
       }
     ]
   })
 }
 
-# NOTE: MSK IAM policy resource ARNs for topics/groups use a distinct ARN shape
-# (arn:aws:kafka:REGION:ACCOUNT:topic/CLUSTER_NAME/CLUSTER_UUID/TOPIC_NAME) that Terraform cannot derive
-# purely by string substitution from the cluster ARN in all AWS partitions/versions. Verify the rendered
-# policy in the AWS console after apply and correct the Resource ARNs if needed -- see AWS's MSK IAM access
-# control documentation for the exact ARN format.
+# NOTE: MSK IAM ARN resource shapes for topics/groups were verified against a live AuthorizationFailed
+# error while building this project -- the /* suffix on both Resource lines above is load-bearing, not
+# decorative. If you narrow these further than "all topics/groups on this cluster" per your org's IAM
+# standards, keep testing against a real CreateTopics call, not just `terraform apply` succeeding --
+# Terraform has no way to validate an IAM policy's semantic correctness against MSK's actual ARN scheme,
+# only that the JSON is syntactically valid.
 
 resource "aws_iam_role_policy" "emr_s3_access" {
   name = "${var.project_name}-${var.environment}-emr-s3-access"
