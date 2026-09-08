@@ -22,13 +22,14 @@ variable "vpc_id" {
 }
 
 variable "subnet_ids" {
-  description = "Exactly 2 subnet IDs in different AZs within var.vpc_id, used by MSK, EMR, and MWAA. networking.tf gives these their own route table pointed at the NAT Gateway in var.nat_gateway_subnet_id, converting them to private -- required by MWAA regardless of whatever route table they use today."
+  description = "Exactly 2 subnet IDs in different AZs within var.vpc_id, used by MSK and EMR always, and by MWAA if var.enable_mwaa is true. Only converted to private (via a dedicated route table through the NAT Gateway in var.nat_gateway_subnet_id) when var.enable_mwaa is true -- MSK/EMR don't require private subnets, only MWAA does. With var.enable_mwaa = false (the default), these are left exactly as they are, public or private."
   type        = list(string)
 }
 
 variable "nat_gateway_subnet_id" {
-  description = "An existing PUBLIC subnet (route to an Internet Gateway) in var.vpc_id, distinct from var.subnet_ids, to host the shared NAT Gateway that makes var.subnet_ids private. A NAT Gateway must live in a public subnet -- it can't host itself in the private subnets it serves."
+  description = "An existing PUBLIC subnet (route to an Internet Gateway) in var.vpc_id, distinct from var.subnet_ids, to host the shared NAT Gateway that makes var.subnet_ids private. Only needed if var.enable_mwaa is true -- leave unset otherwise. A NAT Gateway must live in a public subnet -- it can't host itself in the private subnets it serves."
   type        = string
+  default     = null
 }
 
 variable "kafka_topics" {
@@ -77,4 +78,10 @@ variable "mwaa_environment_class" {
   description = "MWAA environment size. Keep small for training/demo use."
   type        = string
   default     = "mw1.small"
+}
+
+variable "enable_mwaa" {
+  description = "Whether to provision MWAA (managed Airflow) and its supporting IAM role/security group at all. Defaults to false: for study/interactive use (the EMR learning cluster + JupyterHub), MWAA is unnecessary extra cost and complexity -- it only matters if you're running the *scheduled production pipeline* (see RUNBOOK_AWS.md). Set to true to provision it."
+  type        = bool
+  default     = false
 }

@@ -38,7 +38,7 @@ project1/
 ├── tests/                       # pytest unit tests for the package (local PySpark)
 ├── infra/terraform/               # AWS S3 + MSK + EMR + MWAA + IAM as code
 ├── scripts/                     # Local dev, deploy, and teardown helpers
-├── .github/workflows/            # CI (test/build/lint) and CD (deploy_aws.yml)
+├── .github/workflows/            # CI only (test/build/lint) -- AWS deploys are manual, see below
 ├── pyproject.toml                # Package build/test config
 ├── RUNBOOK.md                    # Step-by-step run order for the Databricks track
 └── RUNBOOK_AWS.md                # Step-by-step run order for the AWS-native track
@@ -52,7 +52,7 @@ A retail company ingests clickstream and order events. Product and customer dime
 
 - AWS account with permission to create S3 buckets, an MSK cluster, EMR clusters, an MWAA environment, and IAM roles (see `infra/terraform/`).
 - Python 3.10+ locally for packaging/tests.
-- AWS CLI, if you want to run `terraform apply`/`deploy_aws.yml`'s steps by hand:
+- AWS CLI, if you want to run `terraform apply`/`scripts/deploy_aws.sh`:
   ```bash
   brew install awscli
   aws configure   # or `aws sso login` / AWS_* env vars
@@ -70,18 +70,19 @@ A retail company ingests clickstream and order events. Product and customer dime
   ```
 - (Databricks track only) An AWS Databricks workspace with Unity Catalog enabled, Runtime 15.4 LTS+, and the Databricks CLI configured — see `RUNBOOK.md`.
 
-## CI/CD
+## Deploying artifacts
 
-`.github/workflows/deploy_aws.yml` runs on every push to `main` (or manual dispatch) and publishes the
-wheel + `emr_jobs/` + `airflow/dags/` to S3 — it does not run `terraform apply` (that stays manual, see
-`infra/terraform/README.md`). It needs a GitHub Environment named `aws` with:
+There's no CI/CD pipeline for AWS deploys — artifacts are pushed manually and deliberately, so you're
+always in control of what lands in the S3 bucket the EMR cluster's bootstrap action reads from:
 
-- Secrets: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (credentials with S3 write access to the
-  lakehouse bucket).
-- Variables: `LAKEHOUSE_BUCKET` (required — from `terraform output lakehouse_bucket_name`),
-  `AWS_REGION` (optional, defaults to `us-east-1`).
+```bash
+scripts/deploy_aws.sh <lakehouse-bucket-name>
+```
 
-`scripts/deploy_aws.sh <bucket-name>` does the same thing locally, for a manual deploy without CI.
+This builds the wheel and syncs it, plus `emr_jobs/*.py` and `airflow/dags/retail_lakehouse_pipeline.py`,
+to S3. **Run this before `terraform apply` creates the EMR cluster**, not after — the cluster's bootstrap
+action installs the wheel at creation time, and fails if that S3 key doesn't exist yet. See
+`RUNBOOK_AWS.md` for the exact ordering.
 
 ## Where to start
 
@@ -89,6 +90,16 @@ wheel + `emr_jobs/` + `airflow/dags/` to S3 — it does not run `terraform apply
 2. **Never used Terraform before, or want to understand the AWS infra itself (not just run it)?**
    `TERRAFORM_INFRA_GUIDE.md` — architecture diagrams, how Terraform's dependency graph works, and the
    networking/bootstrap-vs-step lessons learned building this, aimed at a first-time reader.
-3. **Want the production pipeline running?** `infra/terraform/` provisions everything (see `infra/terraform/README.md` — this costs real money, read it before applying). Once applied, `deploy_aws.yml` (or its manual equivalent) publishes the wheel and syncs `emr_jobs/`/`airflow/dags/`, and the MWAA DAG `retail_lakehouse_pipeline` runs the pipeline end to end. See `RUNBOOK_AWS.md` for the exact steps.
-4. **Want to step through the pipeline interactively instead of watching it run as a scheduled job?** `emr-notebooks/00_environment_setup.ipynb` through `06_capstone_end_to_end.ipynb`, in order, on the same EMR JupyterHub cluster. If MSK isn't provisioned yet, run `07_file_rate_streaming_fallback.ipynb` instead of `02_kafka_msk_streaming_ingest.ipynb` and point `03`'s `bronze_table` variable at `bronze_clickstream_rate`.
+3. **Want to run the pipeline interactively (the default, cheapest path)?** `infra/terraform/` provisions
+   S3 + MSK + the EMR learning cluster (see `infra/terraform/README.md` — this costs real money, read it
+   before applying). MWAA is off by default (`var.enable_mwaa = false`) — this path doesn't need it.
+   `emr-notebooks/00_environment_setup.ipynb` through `06_capstone_end_to_end.ipynb`, in order, on the
+   EMR JupyterHub cluster. If MSK isn't provisioned yet, run `07_file_rate_streaming_fallback.ipynb`
+   instead of `02_kafka_msk_streaming_ingest.ipynb` and point `03`'s `bronze_table` variable at
+   `bronze_clickstream_rate`.
+4. **Want the full scheduled production pipeline running (MWAA orchestrating ephemeral EMR clusters)?**
+   Set `enable_mwaa = true` in `terraform.tfvars` — this is meaningfully more cost/complexity than the
+   default path above, so only turn it on if you actually want the scheduled-DAG behavior. Run
+   `scripts/deploy_aws.sh <bucket>` **before** `terraform apply` (see "Deploying artifacts" above — the
+   EMR bootstrap action needs the wheel already in S3). See `RUNBOOK_AWS.md` for the exact steps.
 5. **Working on the Databricks track specifically?** `RUNBOOK.md` covers that track's concepts and structure, but its deploy-mechanics steps (3, 6-7) are stale -- see the banner at the top of `RUNBOOK.md` for specifics.

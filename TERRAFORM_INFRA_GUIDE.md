@@ -57,7 +57,9 @@ terraform destroy   # tears down everything Terraform created
 
 ## Part 2 — This project's architecture
 
-At a glance, `infra/terraform/` builds this:
+At a glance, `infra/terraform/` builds this (the full picture, with `var.enable_mwaa = true` — by
+default MWAA, the NAT Gateway, and the "public subnet"/"private subnets" split simply don't exist, and
+`subnet_ids` are just used as-is by MSK and EMR):
 
 ```mermaid
 flowchart TB
@@ -106,8 +108,8 @@ Read this diagram as two separate concerns layered on the same network:
 | **S3 bucket** | `s3.tf` | One bucket holding Delta table data (`data/tables/`), streaming checkpoints (`data/checkpoints/`), seed files (`data/source/`), MWAA's DAGs (`airflow/`), and build artifacts (`artifacts/`, `bootstrap/`) | The lakehouse's actual storage layer — everything downstream reads/writes here |
 | **MSK Serverless** | `msk.tf` | A Kafka cluster, IAM-authenticated, no broker sizing to manage | The "clickstream" event source the pipeline streams from |
 | **EMR learning cluster** | `emr_learning.tf` | A persistent cluster running Spark + JupyterHub + Livy + Hadoop | Where you run the teaching notebooks (`class-emr/`, `emr-notebooks/`) interactively |
-| **MWAA** | `mwaa.tf` | Managed Apache Airflow | Orchestrates the *production* pipeline: creates a fresh, throwaway EMR cluster per scheduled run, runs the pipeline as Spark steps, then terminates it |
-| **Networking** | `networking.tf` | NAT Gateway, its EIP, a dedicated private route table, the S3 Gateway Endpoint | Makes the subnets MSK/EMR/MWAA actually satisfy "private" (see Part 3) |
+| **MWAA** *(optional, off by default)* | `mwaa.tf` | Managed Apache Airflow | Orchestrates the *production* pipeline: creates a fresh, throwaway EMR cluster per scheduled run, runs the pipeline as Spark steps, then terminates it. Every resource in this file is gated behind `var.enable_mwaa` — the interactive path (learning cluster + notebooks) doesn't need it at all |
+| **Networking** | `networking.tf` | An S3 Gateway Endpoint always; a NAT Gateway, its EIP, and a dedicated private route table only when `var.enable_mwaa = true` | The S3 endpoint saves NAT costs whenever there's a NAT Gateway. The NAT Gateway itself only exists to satisfy MWAA's "no public subnets" rule (see Part 3) — MSK and EMR don't require private subnets at all |
 | **IAM** | `iam.tf` | The EC2 instance role/profile EMR nodes assume, the EMR service role, and their policies (S3, MSK, Glue) | Lets EMR nodes talk to S3/MSK/Glue *ambiently* — no access keys anywhere on the cluster |
 
 Notice the architectural split: **the persistent learning cluster** (`emr_learning.tf`) and **MWAA's
@@ -146,9 +148,10 @@ reimplements the other's logic.
 This is worth its own section because it's genuinely the least intuitive part of this whole setup, and the
 part most likely to produce confusing errors the first time you touch it.
 
-**The rule that drives everything here:** MSK Serverless and MWAA both refuse to run in a "public" subnet
-— one whose route table sends `0.0.0.0/0` straight to an Internet Gateway. They require **private**
-subnets: ones that route `0.0.0.0/0` to a **NAT Gateway** instead.
+**The rule that drives everything here:** MWAA refuses to run in a "public" subnet — one whose route
+table sends `0.0.0.0/0` straight to an Internet Gateway. It requires **private** subnets: ones that route
+`0.0.0.0/0` to a **NAT Gateway** instead. (MSK Serverless and EMR have no such requirement — this whole
+section only matters if `var.enable_mwaa = true`.)
 
 ```mermaid
 flowchart LR
@@ -307,17 +310,16 @@ that's a deliberate scope boundary (see the comments in `variables.tf` on `vpc_i
 
 ## Part 6 — What this actually costs, and why
 
-Three things bill **continuously**, whether or not you're actively using them, from the moment
+Two things bill **continuously** by default, whether or not you're actively using them, from the moment
 `terraform apply` finishes until you tear them down:
 
 | Resource | Bills for |
 |---|---|
 | MSK Serverless | Partition-hours + GB in/out/retained — even fully idle |
 | EMR learning cluster | EC2 instance-hours (master + core nodes) + EBS storage, for as long as it exists |
-| MWAA | Hourly, by environment class — no free/idle tier at all |
 
-Plus a smaller, easy-to-forget one: the **NAT Gateway** (hourly + per-GB processed) — real but modest next
-to the three above.
+Plus, only if you opted into `var.enable_mwaa = true`: MWAA itself (hourly by environment class, no
+free/idle tier) and the NAT Gateway its private-subnet requirement pulls in (hourly + per-GB).
 
 **This is why `RUNBOOK_AWS.md` insists on `terraform destroy` when you're done with a session.** Unlike a
 typical web app's infrastructure (which you might leave running indefinitely because idle compute is

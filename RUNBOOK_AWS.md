@@ -1,31 +1,35 @@
-# Runbook: Retail Lakehouse on AWS-Native EMR + MWAA, MSK, S3, and Delta Lake
+# Runbook: Retail Lakehouse on AWS-Native EMR + MSK + S3 + Delta Lake (MWAA optional)
 
-This is the step-by-step to go from zero to a running end-to-end pipeline on the AWS-native track (EMR +
-MWAA, no Databricks). Read `README.md` first for how this track relates to the Databricks one
+This is the step-by-step to go from zero to a running interactive lakehouse pipeline on the AWS-native
+track (EMR, no Databricks). Read `README.md` first for how this track relates to the Databricks one
 (`RUNBOOK.md`).
 
 **Claude Code did not run any of the steps below against real AWS** — every file in this repo (Terraform,
-the DAG, `deploy_aws.yml`, the notebooks) was authored locally without AWS credentials. Everything from
-`terraform apply` onward requires *you* to have AWS credentials configured in your own shell/CI.
+the DAG, the notebooks) was authored locally without AWS credentials. Everything from `terraform apply`
+onward requires *you* to have AWS credentials configured in your own shell.
+
+**MWAA is off by default** (`var.enable_mwaa = false`). The default path in this runbook — S3 + MSK +
+the persistent EMR learning cluster + JupyterHub — doesn't need it at all. MWAA only matters if you want
+the pipeline running as a *scheduled production job* rather than something you run interactively; see
+"Optional: the scheduled production pipeline (MWAA)" near the end if that's what you want.
 
 ## 0. If you just want to learn the concepts (minimal infra)
 
 `class-emr/01_spark_batch_processing.ipynb` through `04_data_lakehouse_delta_s3.ipynb` are self-contained
 (they generate their own data in-notebook, no MSK/production tables needed) — but unlike the Databricks
-`class/` track, they still need a real Spark session, so you need at least step 2 below applied (S3 +
-the persistent EMR learning cluster) before opening them. No MWAA, no production pipeline required for
-this path.
+`class/` track, they still need a real Spark session, so you need at least step 2 below applied before
+opening them.
 
 ## 1. Prerequisites
 
-- An AWS account with permission to create S3 buckets, an MSK Serverless cluster, EMR clusters, an MWAA
-  environment, and IAM roles.
+- An AWS account with permission to create S3 buckets, an MSK Serverless cluster, EMR clusters, and IAM
+  roles.
 - AWS CLI installed and credentials configured locally:
   ```bash
   brew install awscli
   aws configure   # or `aws sso login` / AWS_* env vars
   ```
-- Session Manager plugin, needed for `aws ssm start-session` to reach EMR's JupyterHub (step 5/6) — the
+- Session Manager plugin, needed for `aws ssm start-session` to reach EMR's JupyterHub (step 5) — the
   base AWS CLI can't open an interactive session on its own:
   ```bash
   brew install --cask session-manager-plugin
@@ -36,33 +40,42 @@ this path.
   brew tap hashicorp/tap
   brew install hashicorp/tap/terraform
   ```
-- An existing VPC with 3 subnets: 2 that Terraform will make private (via a NAT Gateway + dedicated route
-  table in `infra/terraform/networking.tf`), plus 1 separate existing **public** subnet to host that NAT
-  Gateway — a NAT Gateway can't live inside the private subnets it serves. MWAA rejects subnets that
-  route directly to an Internet Gateway, so this is required; see `infra/terraform/README.md`. If the 2
-  subnets were originally public, also run
-  `aws ec2 modify-subnet-attribute --subnet-id <id> --no-map-public-ip-on-launch` on both — MWAA checks
-  this attribute independently of the route table, and Terraform doesn't manage it.
+- An existing VPC with **2 subnets** in different AZs (that's all MSK Serverless and EMR need — no NAT
+  Gateway required for this default path; that's a separate, MWAA-only requirement covered in the
+  optional MWAA section below).
 - Python 3.10+ locally for packaging/tests.
 
 ## 2. Provision AWS infrastructure
 
+The EMR learning cluster's bootstrap action installs the `retail_lakehouse` wheel automatically at
+cluster creation — which means the wheel needs to already be in S3 *before* the cluster is created, and
+the S3 bucket needs to exist before you can upload anything to it. Three small steps, in order:
+
 ```bash
 cd infra/terraform
 cp terraform.tfvars.example terraform.tfvars
-# edit terraform.tfvars: vpc_id, subnet_ids (2 subnets to make private), nat_gateway_subnet_id (1 existing
-# public subnet, distinct from subnet_ids, to host the NAT Gateway)
+# edit terraform.tfvars: vpc_id, subnet_ids (2 subnets, any AZ pairing)
 
 terraform init
 terraform plan
-terraform apply
+terraform apply -exclude=aws_emr_cluster.learning   # everything except the EMR cluster: S3, IAM, MSK, networking
+```
 
+```bash
+cd ..
+BUCKET=$(terraform -chdir=infra/terraform output -raw lakehouse_bucket_name)
+scripts/deploy_aws.sh "$BUCKET"                     # builds the wheel, uploads it to the now-existing bucket
+```
+
+```bash
+cd infra/terraform
+terraform apply                                     # now creates the EMR cluster; its bootstrap succeeds
 terraform output next_steps
 ```
 
-**This costs real money continuously** — MSK Serverless, the EMR learning cluster, and MWAA all bill
-while they exist, not just while in use. See "This costs real money" in `infra/terraform/README.md`, and
-step 9 below for teardown.
+**This costs real money continuously** — MSK Serverless and the EMR learning cluster both bill while they
+exist, not just while in use. See "This costs real money" in `infra/terraform/README.md`, and step 8
+below for teardown.
 
 ## 3. Create the Kafka topic
 
@@ -78,9 +91,8 @@ variable:
 terraform output -raw msk_bootstrap_brokers_command | bash
 ```
 
-No credential registration step is needed — EMR clusters built from this Terraform (the persistent
-learning cluster and the ephemeral production clusters MWAA creates) already have MSK access via the EC2
-instance profile in `iam.tf`.
+No credential registration step is needed — the EMR cluster already has MSK access via the EC2 instance
+profile in `iam.tf`.
 
 ## 4. Package and run tests locally (optional, no AWS needed)
 
@@ -95,10 +107,11 @@ python -m build
 All transformation/streaming/quality logic in `src/retail_lakehouse/` is unit tested against a local
 PySpark session — nothing here touches AWS.
 
-## 5. Access EMR JupyterHub (the persistent learning cluster)
+## 5. Access EMR JupyterHub
 
-JupyterHub has no inbound security group rule opening it to the internet — reach it via SSM port
-forwarding instead (no bastion, key pair, or open ports needed):
+This is the main way you'll interact with everything from here on. JupyterHub has no inbound security
+group rule opening it to the internet — reach it via SSM port forwarding instead (no bastion, key pair,
+or open ports needed):
 
 ```bash
 # Find the master instance ID:
@@ -112,15 +125,14 @@ aws ssm start-session --target <master-instance-id> \
 ```
 
 Then browse to `https://localhost:9443/` (self-signed cert — your browser will warn, that's expected).
-Use the `PySpark` kernel for every notebook below.
+Default login is `jovyan` / `jupyter`. Use the `PySpark` kernel for every notebook below.
 
 ## 6. Run the notebooks
 
 `emr-notebooks/`/`class-emr/` land in JupyterHub's file browser automatically — `emr_learning.tf` uploads
-every `*.ipynb` to S3 via Terraform (`aws_s3_object.emr_notebooks`/`class_emr_notebooks`) and an EMR step
-(`sync_notebooks`, runs once the cluster and JupyterHub are fully up) pulls them into `jovyan`'s home
-directory at cluster creation. Nothing to do here on a fresh cluster — just open JupyterHub and they're
-there.
+every `*.ipynb` to S3 via Terraform and an EMR step (`sync_notebooks`, runs once the cluster and
+JupyterHub are fully up) pulls them into `jovyan`'s home directory at cluster creation. Nothing to do here
+on a fresh cluster — just open JupyterHub and they're there.
 
 If you edit a notebook locally afterward and want that change reflected on an already-running cluster
 (the step only runs once, at creation, so it won't pick up later edits on its own), re-sync manually: push
@@ -137,40 +149,7 @@ placeholder that needs replacing.
   MSK isn't provisioned yet (or you skipped straight here from step 0), run `07` instead of `02`, and set
   `03`'s `bronze_table` variable to `bronze_clickstream_rate`.
 
-## 7. Deploy the production pipeline's artifacts
-
-Either push to `main` (if `.github/workflows/deploy_aws.yml`'s GitHub Environment is configured — see
-`README.md`'s "CI/CD" section for the exact secrets/variables it needs), or run it locally:
-
-```bash
-./scripts/deploy_aws.sh <lakehouse-bucket-name>
-```
-
-Either path builds the wheel and syncs `emr_jobs/*.py` + `airflow/dags/retail_lakehouse_pipeline.py` to
-S3 — the exact files/locations the MWAA environment and its DAG expect.
-
-## 8. Configure and trigger the MWAA DAG
-
-Set these Airflow Variables once per environment (MWAA UI → Admin → Variables, or
-`aws mwaa create-cli-token` + the Airflow CLI):
-
-```text
-retail_lakehouse_bucket            (from `terraform output lakehouse_bucket_name`)
-retail_lakehouse_subnet_id         (one of the subnet_ids passed to Terraform)
-retail_lakehouse_base_path         (e.g. s3://<bucket>/data)
-retail_lakehouse_emr_msk_client_sg (from `terraform output emr_msk_client_security_group_id`)
-```
-
-Optional (defaults match `infra/terraform/variables.tf`): `retail_lakehouse_emr_instance_profile`,
-`retail_lakehouse_emr_service_role`, `retail_lakehouse_emr_release_label`,
-`retail_lakehouse_emr_instance_type`, `retail_lakehouse_schema`.
-
-Then open the Airflow UI (`terraform output mwaa_webserver_url`), find the `retail_lakehouse_pipeline`
-DAG, un-pause it, and trigger a run. It creates an ephemeral EMR cluster, runs `emr_jobs/00` → `01` →
-`07` (fallback, until you provision real MSK traffic and swap this task back to `02`) → `03` → `06` as
-EMR Steps, then always terminates the cluster.
-
-## 9. Cleanup
+## 7. Cleanup
 
 ```bash
 # Drop pipeline tables -- run scripts/delete_pipeline_tables.sql via a SQL editor, or from a notebook
@@ -181,9 +160,6 @@ aws s3 rm s3://$(terraform output -raw lakehouse_bucket_name) --recursive
 terraform destroy
 ```
 
-`terraform destroy` also removes the NAT Gateway, its Elastic IP, and the private route table
-`infra/terraform/networking.tf` created -- nothing NAT-related is left behind to bill after this.
-
 Verify nothing's left billing after:
 
 ```bash
@@ -192,6 +168,50 @@ aws kafka list-clusters
 aws mwaa list-environments
 ```
 
+## Optional: the scheduled production pipeline (MWAA)
+
+Only do this if you actually want the pipeline running as a scheduled Airflow DAG on ephemeral EMR
+clusters, rather than something you run interactively from notebooks — it's meaningfully more cost and
+setup than the default path above.
+
+1. **Additional prerequisite**: one more existing **public** subnet, distinct from your 2 `subnet_ids`,
+   to host a NAT Gateway. MWAA rejects subnets that route directly to an Internet Gateway; MSK/EMR don't
+   care either way, which is why this isn't needed for the default path. If your 2 `subnet_ids` started
+   life as public, also run
+   `aws ec2 modify-subnet-attribute --subnet-id <id> --no-map-public-ip-on-launch` on both — MWAA checks
+   this attribute independently of the route table, and Terraform doesn't manage it.
+2. In `terraform.tfvars`, set:
+   ```hcl
+   enable_mwaa           = true
+   nat_gateway_subnet_id = "subnet-xxxxx"   # the extra public subnet from step 1
+   ```
+3. `terraform apply` again — this creates the NAT Gateway, makes `subnet_ids` private, and provisions
+   MWAA. Expect this to take 20-40 minutes; MWAA environment creation is just slow. Check real status in
+   a second terminal instead of waiting on a blocked one:
+   ```bash
+   aws mwaa get-environment --name <project_name>-<environment> \
+     --query 'Environment.{Status:Status,LastUpdate:LastUpdate}' --output json
+   ```
+4. Set these Airflow Variables once (MWAA UI → Admin → Variables, or `aws mwaa create-cli-token` + the
+   Airflow CLI):
+   ```text
+   retail_lakehouse_bucket            (from `terraform output lakehouse_bucket_name`)
+   retail_lakehouse_subnet_id         (one of the subnet_ids passed to Terraform)
+   retail_lakehouse_base_path         (e.g. s3://<bucket>/data)
+   retail_lakehouse_emr_msk_client_sg (from `terraform output emr_msk_client_security_group_id`)
+   ```
+   Optional (defaults match `infra/terraform/variables.tf`): `retail_lakehouse_emr_instance_profile`,
+   `retail_lakehouse_emr_service_role`, `retail_lakehouse_emr_release_label`,
+   `retail_lakehouse_emr_instance_type`, `retail_lakehouse_schema`.
+5. Open the Airflow UI (`terraform output mwaa_webserver_url`), find the `retail_lakehouse_pipeline` DAG,
+   un-pause it, and trigger a run. It creates an ephemeral EMR cluster, runs `emr_jobs/00` → `01` → `07`
+   (fallback, until you provision real MSK traffic and swap this task back to `02`) → `03` → `06` as EMR
+   Steps, then always terminates the cluster.
+
+To turn MWAA back off later, set `enable_mwaa = false` and `terraform apply` — this destroys the MWAA
+environment, its IAM role/security group, the NAT Gateway, and the private route table, leaving
+`subnet_ids` however they were before.
+
 ## Troubleshooting
 
 **Notebook cell fails with `Failed to find data source: delta`** — you skipped the `%%configure -f` cell
@@ -199,38 +219,15 @@ at the top of the notebook, or ran cells out of order. It must run before any ot
 session.
 
 **`Cannot import retail_lakehouse`** — the EMR cluster's bootstrap action installs it automatically from
-`s3://<bucket>/artifacts/retail_lakehouse-latest.whl`. If you ran step 2 (provision infra) before step 7
-(deploy artifacts), that key won't exist yet — run step 7, then recreate the cluster so its bootstrap
-action can pick up the wheel (bootstrap only runs at cluster creation).
+`s3://<bucket>/artifacts/retail_lakehouse-latest.whl`. If you applied `terraform apply` (creating the EMR
+cluster) before running `scripts/deploy_aws.sh`, that key won't exist yet — run the deploy script, then
+recreate the cluster (`terraform apply -replace=aws_emr_cluster.learning`) so its bootstrap action can
+pick up the wheel.
 
 **Step 3's bootstrap-brokers command prints `None` instead of a broker string** — the MSK Serverless
 cluster isn't `ACTIVE` yet. Check with `aws kafka list-clusters-v2 --query 'ClusterInfoList[].State'` and
 try again once it says `ACTIVE` — this usually takes a few minutes after `terraform apply` finishes.
 
-**MWAA DAG import error / DAG not showing up** — confirm `airflow/dags/retail_lakehouse_pipeline.py`
-actually landed in `s3://<bucket>/airflow/dags/` (step 7), and that all four required Airflow Variables
-from step 8 are set — the DAG raises at parse time if any are missing.
-
 **EMR step fails at submit time with a Maven/Ivy resolution error** — the EMR subnet has no outbound
-internet access; `--packages io.delta:...` needs to reach Maven Central. Double-check the NAT
-Gateway/private-subnet setup in `infra/terraform/README.md`'s prerequisites.
-
-**MWAA `CreateEnvironment` fails with `ValidationException: The subnets must be private`, even though
-routing looks correct in `aws ec2 describe-route-tables`** — MWAA also checks the EC2 subnet attribute
-`MapPublicIpOnLaunch`, independent of the route table. Subnets that started life as public (most
-default-VPC subnets do) keep this set to `true` even after Terraform repoints their routing. Fix:
-```bash
-aws ec2 modify-subnet-attribute --subnet-id <subnet-id> --no-map-public-ip-on-launch
-```
-Do this for both subnets in `var.subnet_ids`, then retry.
-
-**`terraform apply` seems stuck on the MWAA environment for 30+ minutes** — this isn't necessarily stuck;
-AWS documents MWAA environment creation as commonly taking 20-40 minutes. Check real status in a second
-terminal instead of waiting on a blocked one:
-```bash
-aws mwaa get-environment --name <project_name>-<environment> \
-  --query 'Environment.{Status:Status,LastUpdate:LastUpdate}' --output json
-```
-`CREATING` means it's genuinely still working. `CREATE_FAILED` shows the real error immediately in
-`LastUpdate.Error.ErrorMessage`.
-
+internet access. Confirm the subnet has a route to an Internet Gateway (default path) or NAT Gateway
+(MWAA path) — `--packages io.delta:...` needs to reach Maven Central either way.

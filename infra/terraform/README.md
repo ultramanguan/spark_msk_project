@@ -1,19 +1,23 @@
-# Terraform: S3 + MSK Serverless + EMR + MWAA for the Retail Lakehouse project
+# Terraform: S3 + MSK Serverless + EMR (+ optional MWAA) for the Retail Lakehouse project
 
-This provisions the AWS infrastructure the production pipeline needs, entirely within AWS (no
-Databricks dependency for this track):
+This provisions the AWS infrastructure the lakehouse pipeline needs, entirely within AWS (no Databricks
+dependency for this track):
 
-- An **S3 bucket** for Delta table data, streaming checkpoints, source files, and MWAA's DAGs/requirements.
+- An **S3 bucket** for Delta table data, streaming checkpoints, source files, and (if MWAA is enabled)
+  its DAGs/requirements.
 - An **MSK Serverless cluster** (IAM-authenticated) for the clickstream Kafka topic.
 - A **persistent EMR cluster** with JupyterHub, for interactive/teaching notebooks.
-- An **MWAA (managed Airflow) environment** to orchestrate the production pipeline on ephemeral EMR clusters.
+- Optionally, an **MWAA (managed Airflow) environment** to orchestrate the pipeline as a scheduled job on
+  ephemeral EMR clusters — off by default (`var.enable_mwaa = false`). The interactive path above doesn't
+  need it at all.
 
 ## This costs real money
 
 MSK Serverless bills per partition-hour and per GB in/out/retained even when idle. The EMR learning
-cluster bills continuously while running (multiple `m5.xlarge` nodes by default). MWAA has no free/idle
-tier either. **Destroy what you're not using (`terraform destroy`) when you're done with the demo/training
-session.** Don't leave any of this running.
+cluster bills continuously while running (multiple `m5.xlarge` nodes by default). If you enable MWAA, it
+has no free/idle tier either, and it also brings in a NAT Gateway (hourly + per-GB). **Destroy what
+you're not using (`terraform destroy`) when you're done with the demo/training session.** Don't leave any
+of this running.
 
 ## Prerequisites
 
@@ -29,16 +33,16 @@ session.** Don't leave any of this running.
    brew tap hashicorp/tap
    brew install hashicorp/tap/terraform
    ```
-3. An existing VPC with 3 subnets: 2 that will become private (any AZ pairing works — `networking.tf`
-   moves them onto a dedicated route table through a shared NAT Gateway, which is what both MSK Serverless
-   and MWAA require), plus 1 separate **public** subnet (route to an Internet Gateway) to host that NAT
-   Gateway — a NAT Gateway can't sit inside the private subnets it serves. `networking.tf` also adds a
-   free S3 gateway endpoint, so the S3 traffic this project generates (Delta tables, checkpoints, the
-   bootstrap wheel, DAG sync) doesn't hit the NAT Gateway's per-GB charge at all.
+3. An existing VPC with **2 subnets**, any AZ pairing — that's all MSK Serverless and EMR need. Neither
+   requires the subnets to be private; a plain route to an Internet Gateway is fine.
 
-   If the 2 subnets you're repurposing were originally public, also disable their
-   "auto-assign public IPv4" attribute — MWAA checks this independently of the route table and will
-   reject them with `The subnets must be private` even after `networking.tf` fixes their routing:
+   **Only if you set `enable_mwaa = true`** (see Usage below), you additionally need one more existing
+   **public** subnet, distinct from the 2 above, to host a NAT Gateway — MWAA (unlike MSK/EMR) rejects
+   subnets that route directly to an Internet Gateway. `networking.tf` then moves the 2 subnets onto a
+   dedicated route table through that NAT Gateway. If those 2 subnets started life as public, also
+   disable their "auto-assign public IPv4" attribute — MWAA checks this independently of the route table
+   and will reject them with `The subnets must be private` even after `networking.tf` fixes their
+   routing:
    ```bash
    aws ec2 modify-subnet-attribute --subnet-id <subnet-id> --no-map-public-ip-on-launch
    ```
@@ -46,33 +50,50 @@ session.** Don't leave any of this running.
 
 ## Usage
 
+The EMR learning cluster's bootstrap action needs the `retail_lakehouse` wheel already in S3 at creation
+time, which means the S3 bucket needs to exist first. Three steps, in order:
+
 ```bash
 cd infra/terraform
 cp terraform.tfvars.example terraform.tfvars
-# edit terraform.tfvars: vpc_id, subnet_ids (2 subnets to make private), nat_gateway_subnet_id (1 existing
-# public subnet, distinct from subnet_ids, to host the NAT Gateway)
+# edit terraform.tfvars: vpc_id, subnet_ids (2 subnets). Leave enable_mwaa unset (defaults to false).
 
 terraform init
 terraform plan
-terraform apply
+terraform apply -exclude=aws_emr_cluster.learning   # S3, IAM, MSK, networking -- everything but EMR
+```
 
+```bash
+cd ..
+BUCKET=$(terraform -chdir=infra/terraform output -raw lakehouse_bucket_name)
+scripts/deploy_aws.sh "$BUCKET"                     # builds + uploads the wheel to the now-existing bucket
+```
+
+```bash
+cd infra/terraform
+terraform apply                                     # creates the EMR cluster; bootstrap now succeeds
 terraform output next_steps
 ```
 
 Follow the printed `next_steps` output — it walks through fetching bootstrap brokers and creating the
 Kafka topic. No credential registration step is needed: EMR authenticates to MSK via the EC2 instance
-profile in `iam.tf`, attached automatically to any cluster built from this Terraform.
+profile in `iam.tf`, attached automatically.
+
+**Want the scheduled production pipeline too?** Set `enable_mwaa = true` and `nat_gateway_subnet_id` in
+`terraform.tfvars` (see Prerequisites above for the extra subnet this needs), then `terraform apply`
+again. See `RUNBOOK_AWS.md`'s "Optional: the scheduled production pipeline (MWAA)" section for the rest.
 
 ## Files
 
 - `versions.tf` — Terraform/provider version pins.
 - `variables.tf` — all inputs; see `terraform.tfvars.example` for a starting point.
 - `s3.tf` — the lakehouse bucket, versioning, encryption, public access block, checkpoint lifecycle rule.
-- `networking.tf` — makes `var.subnet_ids` private: a shared NAT Gateway (hosted in `var.nat_gateway_subnet_id`,
-  which must stay public), an Elastic IP for it, and a dedicated route table pointing `var.subnet_ids` at
-  it — required because MWAA rejects subnets that route directly to an Internet Gateway. Also adds a free
-  S3 gateway VPC endpoint attached to every route table in `var.vpc_id`, so S3 traffic doesn't route
-  through (and get billed by) the NAT Gateway.
+- `networking.tf` — only creates anything when `var.enable_mwaa = true`: a shared NAT Gateway (hosted in
+  `var.nat_gateway_subnet_id`, which must stay public), an Elastic IP for it, and a dedicated route table
+  pointing `var.subnet_ids` at it — MWAA rejects subnets that route directly to an Internet Gateway; MSK
+  and EMR don't care either way. Always creates a free S3 gateway VPC endpoint (regardless of
+  `enable_mwaa`) attached to every route table in `var.vpc_id`, so S3 traffic doesn't route through (and
+  get billed by) the NAT Gateway when it exists.
 - `msk.tf` — MSK Serverless cluster + its security group. Ingress is allowed from a Terraform-managed
   `emr_msk_client` marker security group, which any EMR cluster (persistent or ephemeral) attaches to get
   MSK access — see the comment on that resource for why.
@@ -82,9 +103,11 @@ profile in `iam.tf`, attached automatically to any cluster built from this Terra
   IAM ARN shapes for topics/consumer groups aren't simply derivable from the cluster ARN by string
   substitution across all AWS partitions, so double-check before relying on this in a real account.
 - `emr_learning.tf` — a persistent EMR cluster with JupyterHub, for interactive/teaching notebooks (see
-  `emr-notebooks/` and `class-emr/`). Bills continuously while running.
+  `emr-notebooks/` and `class-emr/`). Bills continuously while running. Always created, regardless of
+  `enable_mwaa`.
 - `mwaa.tf` — the MWAA (managed Airflow) environment that orchestrates the production pipeline (see
-  `airflow/dags/`). The webserver is set to `PUBLIC_ONLY` for simplicity in this
+  `airflow/dags/`). Every resource in this file is gated behind `var.enable_mwaa` (default `false`) —
+  none of it exists unless you opt in. The webserver is set to `PUBLIC_ONLY` for simplicity in this
   demo/training context — MWAA still enforces IAM/console-login auth on top of that, but it's a step down
   from the SSM-only access pattern `emr_learning.tf` uses for JupyterHub. Switch to `PRIVATE_ONLY` plus a
   VPC-internal access path if that tradeoff doesn't fit your environment.
@@ -105,10 +128,8 @@ terraform destroy
 ```
 
 This tears down everything this Terraform manages -- the MSK Serverless cluster, the persistent EMR
-learning cluster, the MWAA environment, the S3 bucket, the NAT Gateway + Elastic IP + private route table,
-the S3 gateway endpoint, and all IAM roles/security groups. `var.subnet_ids` revert to whatever route
-table they'd use by default once their explicit association here is removed; `var.nat_gateway_subnet_id`
-was never modified, since it was already public.
+learning cluster, the S3 bucket, the S3 gateway endpoint, all IAM roles/security groups, and (if
+`enable_mwaa` was ever `true`) the MWAA environment, the NAT Gateway + Elastic IP + private route table.
 
 Verify nothing's left billing after:
 
@@ -117,4 +138,3 @@ aws emr list-clusters --active
 aws kafka list-clusters
 aws mwaa list-environments
 ```
-
