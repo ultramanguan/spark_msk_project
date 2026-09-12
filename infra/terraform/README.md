@@ -47,6 +47,8 @@ of this running.
    aws ec2 modify-subnet-attribute --subnet-id <subnet-id> --no-map-public-ip-on-launch
    ```
    (repeat for both). Terraform doesn't manage this attribute, so it has to be done by hand.
+4. Python 3.10+ locally — `pip install -e ".[dev,kafka]"` (see Usage below) needs it to build the wheel
+   that `scripts/deploy_aws.sh` uploads.
 
 ## Usage
 
@@ -69,6 +71,10 @@ terraform apply -target=aws_s3_bucket.lakehouse -target=aws_s3_bucket_versioning
 
 ```bash
 cd ..
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev,kafka]"   # installs `build`, used by deploy_aws.sh below
+
 BUCKET=$(terraform -chdir=infra/terraform output -raw lakehouse_bucket_name)
 scripts/deploy_aws.sh "$BUCKET"                     # builds + uploads the wheel to the now-existing bucket
 ```
