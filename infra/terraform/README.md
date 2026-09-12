@@ -51,7 +51,9 @@ of this running.
 ## Usage
 
 The EMR learning cluster's bootstrap action needs the `retail_lakehouse` wheel already in S3 at creation
-time, which means the S3 bucket needs to exist first. Three steps, in order:
+time, which means the S3 bucket needs to exist first. Provisioning happens in three phases: create just
+the S3 bucket, upload the wheel to it, then apply everything else — there's no need to exclude the EMR
+cluster from that last apply, since the wheel is already in place by the time it runs.
 
 ```bash
 cd infra/terraform
@@ -59,8 +61,10 @@ cp terraform.tfvars.example terraform.tfvars
 # edit terraform.tfvars: vpc_id, subnet_ids (2 subnets). Leave enable_mwaa unset (defaults to false).
 
 terraform init
-terraform plan
-terraform apply -exclude=aws_emr_cluster.learning   # S3, IAM, MSK, networking -- everything but EMR
+terraform apply -target=aws_s3_bucket.lakehouse -target=aws_s3_bucket_versioning.lakehouse \
+  -target=aws_s3_bucket_server_side_encryption_configuration.lakehouse \
+  -target=aws_s3_bucket_public_access_block.lakehouse \
+  -target=aws_s3_bucket_lifecycle_configuration.lakehouse
 ```
 
 ```bash
@@ -69,9 +73,28 @@ BUCKET=$(terraform -chdir=infra/terraform output -raw lakehouse_bucket_name)
 scripts/deploy_aws.sh "$BUCKET"                     # builds + uploads the wheel to the now-existing bucket
 ```
 
+Now apply everything else. Pick **one**:
+
+**A. Without MWAA** (default — S3 + MSK + the persistent EMR learning cluster + JupyterHub):
+
 ```bash
 cd infra/terraform
-terraform apply                                     # creates the EMR cluster; bootstrap now succeeds
+terraform plan
+terraform apply
+terraform output next_steps
+```
+
+**B. With MWAA** (scheduled production pipeline — see Prerequisites above for the extra subnet this
+needs, and `RUNBOOK_AWS.md`'s "Optional: the scheduled production pipeline (MWAA)" section for the
+post-apply Airflow setup):
+
+```bash
+cd infra/terraform
+# in terraform.tfvars, set:
+#   enable_mwaa           = true
+#   nat_gateway_subnet_id = "subnet-xxxxx"   # extra public subnet, distinct from subnet_ids
+terraform plan
+terraform apply
 terraform output next_steps
 ```
 
@@ -79,9 +102,8 @@ Follow the printed `next_steps` output — it walks through fetching bootstrap b
 Kafka topic. No credential registration step is needed: EMR authenticates to MSK via the EC2 instance
 profile in `iam.tf`, attached automatically.
 
-**Want the scheduled production pipeline too?** Set `enable_mwaa = true` and `nat_gateway_subnet_id` in
-`terraform.tfvars` (see Prerequisites above for the extra subnet this needs), then `terraform apply`
-again. See `RUNBOOK_AWS.md`'s "Optional: the scheduled production pipeline (MWAA)" section for the rest.
+You can switch between paths A and B later by flipping `enable_mwaa` in `terraform.tfvars` and re-running
+`terraform apply`.
 
 ## Files
 

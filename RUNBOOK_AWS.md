@@ -48,8 +48,10 @@ opening them.
 ## 2. Provision AWS infrastructure
 
 The EMR learning cluster's bootstrap action installs the `retail_lakehouse` wheel automatically at
-cluster creation — which means the wheel needs to already be in S3 *before* the cluster is created, and
-the S3 bucket needs to exist before you can upload anything to it. Three small steps, in order:
+cluster creation — which means the wheel needs to already be in S3 *before* the cluster is created. So
+provisioning happens in three phases: create just the S3 bucket, upload the wheel to it, then apply
+everything else. There's no longer any need to exclude the EMR cluster from that last apply — by the
+time it runs, the wheel is already in place, so its bootstrap succeeds on the first try.
 
 ```bash
 cd infra/terraform
@@ -57,8 +59,10 @@ cp terraform.tfvars.example terraform.tfvars
 # edit terraform.tfvars: vpc_id, subnet_ids (2 subnets, any AZ pairing)
 
 terraform init
-terraform plan
-terraform apply -exclude=aws_emr_cluster.learning   # everything except the EMR cluster: S3, IAM, MSK, networking
+terraform apply -target=aws_s3_bucket.lakehouse -target=aws_s3_bucket_versioning.lakehouse \
+  -target=aws_s3_bucket_server_side_encryption_configuration.lakehouse \
+  -target=aws_s3_bucket_public_access_block.lakehouse \
+  -target=aws_s3_bucket_lifecycle_configuration.lakehouse
 ```
 
 ```bash
@@ -67,11 +71,34 @@ BUCKET=$(terraform -chdir=infra/terraform output -raw lakehouse_bucket_name)
 scripts/deploy_aws.sh "$BUCKET"                     # builds the wheel, uploads it to the now-existing bucket
 ```
 
+Now apply everything else. Pick **one** of the two paths below, depending on whether you want MWAA:
+
+**A. Without MWAA** (default — S3 + MSK + the persistent EMR learning cluster + JupyterHub; this is the
+right choice unless you specifically want the scheduled-production-pipeline path):
+
 ```bash
 cd infra/terraform
-terraform apply                                     # now creates the EMR cluster; its bootstrap succeeds
+terraform plan
+terraform apply
 terraform output next_steps
 ```
+
+**B. With MWAA** (scheduled production pipeline on ephemeral EMR clusters — meaningfully more cost and
+setup; see "Optional: the scheduled production pipeline (MWAA)" near the end for the extra subnet
+prerequisite and post-apply Airflow setup this needs):
+
+```bash
+cd infra/terraform
+# in terraform.tfvars, set:
+#   enable_mwaa           = true
+#   nat_gateway_subnet_id = "subnet-xxxxx"   # an existing PUBLIC subnet, distinct from subnet_ids
+terraform plan
+terraform apply
+terraform output next_steps
+```
+
+You can switch between the two later by flipping `enable_mwaa` in `terraform.tfvars` and re-running
+`terraform apply` — see "To turn MWAA back off later" below.
 
 **This costs real money continuously** — MSK Serverless and the EMR learning cluster both bill while they
 exist, not just while in use. See "This costs real money" in `infra/terraform/README.md`, and step 8
@@ -180,19 +207,17 @@ setup than the default path above.
    life as public, also run
    `aws ec2 modify-subnet-attribute --subnet-id <id> --no-map-public-ip-on-launch` on both — MWAA checks
    this attribute independently of the route table, and Terraform doesn't manage it.
-2. In `terraform.tfvars`, set:
-   ```hcl
-   enable_mwaa           = true
-   nat_gateway_subnet_id = "subnet-xxxxx"   # the extra public subnet from step 1
-   ```
-3. `terraform apply` again — this creates the NAT Gateway, makes `subnet_ids` private, and provisions
-   MWAA. Expect this to take 20-40 minutes; MWAA environment creation is just slow. Check real status in
-   a second terminal instead of waiting on a blocked one:
+2. Follow path **B** in step 2 above (`enable_mwaa = true` + `nat_gateway_subnet_id` in
+   `terraform.tfvars`, then `terraform apply`) if you haven't already. If you're switching an
+   already-applied path-A deployment to MWAA, just set those two variables and re-run `terraform apply`
+   — this creates the NAT Gateway, makes `subnet_ids` private, and provisions MWAA. Expect this to take
+   20-40 minutes; MWAA environment creation is just slow. Check real status in a second terminal instead
+   of waiting on a blocked one:
    ```bash
    aws mwaa get-environment --name <project_name>-<environment> \
      --query 'Environment.{Status:Status,LastUpdate:LastUpdate}' --output json
    ```
-4. Set these Airflow Variables once (MWAA UI → Admin → Variables, or `aws mwaa create-cli-token` + the
+3. Set these Airflow Variables once (MWAA UI → Admin → Variables, or `aws mwaa create-cli-token` + the
    Airflow CLI):
    ```text
    retail_lakehouse_bucket            (from `terraform output lakehouse_bucket_name`)
@@ -203,7 +228,7 @@ setup than the default path above.
    Optional (defaults match `infra/terraform/variables.tf`): `retail_lakehouse_emr_instance_profile`,
    `retail_lakehouse_emr_service_role`, `retail_lakehouse_emr_release_label`,
    `retail_lakehouse_emr_instance_type`, `retail_lakehouse_schema`.
-5. Open the Airflow UI (`terraform output mwaa_webserver_url`), find the `retail_lakehouse_pipeline` DAG,
+4. Open the Airflow UI (`terraform output mwaa_webserver_url`), find the `retail_lakehouse_pipeline` DAG,
    un-pause it, and trigger a run. It creates an ephemeral EMR cluster, runs `emr_jobs/00` → `01` → `07`
    (fallback, until you provision real MSK traffic and swap this task back to `02`) → `03` → `06` as EMR
    Steps, then always terminates the cluster.
